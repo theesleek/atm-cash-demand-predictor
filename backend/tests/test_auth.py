@@ -75,16 +75,43 @@ def _login(client: TestClient, username: str) -> str:
     return response.json()["access_token"]
 
 
+def test_login_preflight_allows_cloudflare_frontend(auth_environment) -> None:
+    client, _, _ = auth_environment
+
+    response = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "https://atm-cash-demand-predictor.pages.dev",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-action-source",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://atm-cash-demand-predictor.pages.dev"
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "OPTIONS" in response.headers["access-control-allow-methods"]
+    allowed_headers = response.headers["access-control-allow-headers"].lower()
+    assert "content-type" in allowed_headers
+    assert "x-action-source" in allowed_headers
+
+
 def test_successful_login_returns_expiring_token_and_audit(auth_environment) -> None:
     client, session, _ = auth_environment
 
     response = client.post(
         "/auth/login",
         json={"username": "viewer", "password": TEST_PASSWORD},
-        headers={"X-Action-Source": "WEB"},
+        headers={
+            "Origin": "https://atm-cash-demand-predictor.pages.dev",
+            "X-Action-Source": "WEB",
+        },
     )
 
     assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://atm-cash-demand-predictor.pages.dev"
+    assert response.headers["access-control-allow-credentials"] == "true"
     payload = response.json()
     assert payload["token_type"] == "bearer"
     assert payload["expires_in"] > 0

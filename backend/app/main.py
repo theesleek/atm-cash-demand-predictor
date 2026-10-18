@@ -28,14 +28,23 @@ app = FastAPI(
 
 settings.validate()
 
+allowed_cors_origins = list(
+    dict.fromkeys(
+        [
+            *settings.cors_origins,
+            "https://atm-cash-demand-predictor.pages.dev",
+        ]
+    )
+)
+
 app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(settings.cors_origins),
+    allow_origins=allowed_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "X-Action-Source"],
 )
 
 
