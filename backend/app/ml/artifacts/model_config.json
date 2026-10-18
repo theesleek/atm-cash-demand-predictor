@@ -1,0 +1,35 @@
+{
+  "ensemble": "50/50",
+  "models": [
+    "linear_regression",
+    "random_forest"
+  ],
+  "features": [
+    "atm_id",
+    "operation_count",
+    "is_missing_observation",
+    "day_of_week",
+    "is_weekend",
+    "day_of_month",
+    "month",
+    "week_of_year",
+    "is_month_end",
+    "lag_1",
+    "lag_7",
+    "lag_14",
+    "rolling_7",
+    "rolling_14",
+    "rolling_30",
+    "operation_count_lag_1",
+    "operation_count_rolling_7"
+  ],
+  "target": "next_day_cash_flow"
+  ,"model_version": "phase4-production-50-50"
+  ,"dataset_version": "sha256:3a6953eee86d69426108c3aad26d833d961fb70e0ca5eb2810f257c01f3e5754"
+  ,"feature_version": "production-features-v1"
+  ,"status": "ACTIVE"
+  ,"artifact_checksums": {
+    "linear_regression": "9ccb36f6ff9d60b3f005666a9f2c8e194cb86f1bc2a98de4bf9a2d7ad60b8c15",
+    "random_forest": "a5226f9a816952968d71b34b07788893efff3075379582b85d19e9b2feb5438a"
+  }
+}

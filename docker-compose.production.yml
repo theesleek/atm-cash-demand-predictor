@@ -1,0 +1,14 @@
+services:
+  postgres:
+    ports: !override []
+
+  backend:
+    ports: !override []
+
+  frontend:
+    build:
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: /ws/events
+    ports: !override
+      - "127.0.0.1:8080:80"

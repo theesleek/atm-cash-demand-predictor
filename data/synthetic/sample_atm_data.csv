@@ -1,0 +1,6 @@
+atm_code,branch_id,region,date,current_cash,daily_demand,capacity,status
+ATM-001,BR-101,Central,2026-09-01,32000,28000,50000,active
+ATM-002,BR-102,North,2026-09-01,18000,26000,45000,warning
+ATM-003,BR-103,South,2026-09-01,41000,21000,50000,active
+ATM-004,BR-104,East,2026-09-01,25000,25000,40000,active
+ATM-005,BR-105,West,2026-09-01,15500,24000,35000,critical

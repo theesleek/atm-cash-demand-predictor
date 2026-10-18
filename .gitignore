@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+.venv/
+.env
+.env.*
+!.env.example
+!.env.production.example
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+frontend/dist/
+frontend/.vite/
+dist/
+*.log
+logs/
+.DS_Store
+tmp/
+
+# Local/private datasets and generated processed exports stay out of version control.
+data/raw/
+data/private/
+data/processed/atm_daily_history.csv
+
+# Authorized raw source data stays local and must never enter version control.
+data/raw/tinkoff/*
+!data/raw/tinkoff/.gitkeep
