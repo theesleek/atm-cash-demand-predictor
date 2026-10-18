@@ -258,8 +258,15 @@ function DashboardPage() {
     forecastAtm.current = atm.atm_code;
     const controller = new AbortController();
     setForecast({ loading: true, data: null, error: null });
-    apiRequest(`/forecast?atm_id=${encodeURIComponent(atm.atm_code)}`, { signal: controller.signal })
-      .then((data) => setForecast({ loading: false, data, error: null }))
+    apiRequest(`/atms/${encodeURIComponent(atm.atm_code)}/readiness`, { signal: controller.signal })
+      .then((readiness) => {
+        if (readiness.status !== 'READY') {
+          setForecast({ loading: false, data: null, error: readiness.reason });
+          return null;
+        }
+        return apiRequest(`/forecast?atm_id=${encodeURIComponent(atm.atm_code)}`, { signal: controller.signal })
+          .then((data) => setForecast({ loading: false, data, error: null }));
+      })
       .catch((error) => {
         if (error.name !== 'AbortError') setForecast({ loading: false, data: null, error: error.message });
       });

@@ -189,3 +189,14 @@ def test_new_atm_is_insufficient_until_history_exists(import_environment) -> Non
     forecast = client.get(f"/forecast?atm_id={atm.atm_code}", headers=_headers(admin))
     assert forecast.status_code == 422
     assert "Insufficient" in forecast.json()["detail"]
+
+
+def test_atm_001_forecast_request_requires_uploaded_history(import_environment) -> None:
+    client, session, admin, _analyst, atm = import_environment
+    atm.atm_code = "ATM-001"
+    session.commit()
+
+    response = client.get("/forecast?atm_id=ATM-001", headers=_headers(admin))
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Forecast unavailable: Insufficient history: at least 14 observed days are required for a forecast."

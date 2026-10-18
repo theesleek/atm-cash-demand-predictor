@@ -66,8 +66,15 @@ export default function ForecastPage() {
     setForecast({ loading: true, data: null, error: null });
     setHistory({ loading: true, data: null, error: null });
 
-    apiRequest(`/forecast?atm_id=${encodeURIComponent(selectedAtm)}`, { signal: controller.signal })
-      .then((data) => setForecast({ loading: false, data, error: null }))
+    apiRequest(`/atms/${encodeURIComponent(selectedAtm)}/readiness`, { signal: controller.signal })
+      .then((readiness) => {
+        if (readiness.status !== 'READY') {
+          setForecast({ loading: false, data: null, error: readiness.reason });
+          return null;
+        }
+        return apiRequest(`/forecast?atm_id=${encodeURIComponent(selectedAtm)}`, { signal: controller.signal })
+          .then((data) => setForecast({ loading: false, data, error: null }));
+      })
       .catch((error) => {
         if (error.name !== 'AbortError') setForecast({ loading: false, data: null, error });
       });
