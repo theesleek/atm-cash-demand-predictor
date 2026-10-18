@@ -38,6 +38,17 @@ function resourceResult(result) {
     : { loading: false, data: null, error: result.reason?.message || 'REQUEST_FAILED' };
 }
 
+function resourceErrorMessage(resource, fallback) {
+  const error = resource?.error;
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
 function ResourceState({ resource, empty, children }) {
   if (resource.loading) return <LoadingState label="Loading live data" />;
   if (resource.error) {
@@ -149,7 +160,17 @@ function CashForecast({ atms, forecast }) {
   if (atms.loading || forecast.loading) return <LoadingState label="Loading cash forecast" />;
   if (atms.error) return <ErrorState title="ATM data unavailable" description="The forecast cannot be selected until ATM data loads." />;
   if (!atms.data?.length) return <EmptyState title="No ATM data available" />;
-  if (forecast.error) return <ErrorState title="Forecast unavailable" description="The backend could not provide a forecast for the selected ATM." />;
+  if (forecast.error) {
+    return (
+      <ErrorState
+        title="Forecast unavailable"
+        description={resourceErrorMessage(
+          forecast,
+          'The backend could not provide a forecast for the selected ATM.',
+        )}
+      />
+    );
+  }
   if (!forecast.data) return <EmptyState title="No forecast available" />;
 
   const atm = atms.data[0];

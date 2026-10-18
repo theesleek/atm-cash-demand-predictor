@@ -25,11 +25,25 @@ function dateLabel(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
+function resourceErrorMessage(resource, fallback) {
+  const error = resource?.error;
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
 function ResourceError({ title, resource, onRetry }) {
   return (
     <ErrorState
       title={title}
-      description="The backend could not provide this forecast information."
+      description={resourceErrorMessage(
+        resource,
+        'The backend could not provide this forecast information.',
+      )}
       action={<button className="button button--secondary" type="button" onClick={onRetry}>Retry</button>}
     />
   );

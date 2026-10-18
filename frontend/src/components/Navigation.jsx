@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Bell, ChartNoAxesCombined, ChevronRight, CircleUserRound, Home as HomeIcon, House, Landmark, LogOut, Menu, Radio, X } from 'lucide-react';
+import { Activity, Bell, ChartNoAxesCombined, ChevronRight, CircleUserRound, Database, Home as HomeIcon, House, Landmark, LogOut, Menu, Radio, X } from 'lucide-react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Button } from './ui';
@@ -15,6 +15,7 @@ const internalLinks = [
   { label: 'Dashboard', to: '/dashboard', icon: House },
   { label: 'Home', to: '/', icon: HomeIcon },
   { label: 'ATMs', to: '/atms', icon: Landmark },
+  { label: 'Data Ingestion', to: '/data-imports', icon: Database },
   { label: 'Forecast', to: '/forecast', icon: ChartNoAxesCombined },
   { label: 'Alerts', to: '/alerts', icon: Bell },
   { label: 'Replenishment', to: '/replenishments', icon: Radio },
