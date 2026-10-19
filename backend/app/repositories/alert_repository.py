@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.atm import Alert
@@ -53,6 +53,8 @@ class AlertRepository:
         severity: str,
         message: str,
         action_source: str = "SYSTEM",
+        *,
+        commit: bool = True,
     ) -> Alert:
         alert = (
             self.session.query(Alert)
@@ -80,7 +82,33 @@ class AlertRepository:
             alert.forecast_id = forecast_id
             alert.message = message
             alert.action_source = action_source
-        self.session.commit()
+        try:
+            if commit:
+                self.session.commit()
+            else:
+                self.session.flush()
+        except IntegrityError:
+            self.session.rollback()
+            alert = (
+                self.session.query(Alert)
+                .filter(
+                    Alert.atm_id == atm_id,
+                    Alert.alert_type == "CASH_RISK",
+                    Alert.severity == severity,
+                    Alert.status.in_(self.ACTIVE_STATUSES),
+                )
+                .order_by(Alert.created_at.desc(), Alert.id.desc())
+                .first()
+            )
+            if alert is None:
+                raise
+            alert.forecast_id = forecast_id
+            alert.message = message
+            alert.action_source = action_source
+            if commit:
+                self.session.commit()
+            else:
+                self.session.flush()
         self.session.refresh(alert)
         return alert
 

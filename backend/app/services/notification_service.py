@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.permissions import has_permission
-from app.jobs.queue import enqueue_job
+from app.jobs.queue import enqueue_job, stage_notification as stage_notification_outbox
 from app.metrics import increment_metric
 from app.models.auth import User
 from app.repositories.atm_repository import ATMRepository
@@ -161,11 +161,18 @@ class NotificationService:
             return _gmail_api_send
         return _smtp_send
 
-    def notify(self, event_type: str, subject: str, message: str) -> list[dict[str, object]]:
+    def notify(
+        self,
+        event_type: str,
+        subject: str,
+        message: str,
+        *,
+        event_key: str | None = None,
+    ) -> list[dict[str, object]]:
         results: list[dict[str, object]] = []
         telegram_users = self.repository.linked_users()
         if not telegram_users:
-            results.append(self._deliver(event_type, "TELEGRAM", "", subject, message, None))
+            results.append(self._deliver(event_type, "TELEGRAM", "", subject, message, None, event_key))
         else:
             for user in telegram_users:
                 results.append(
@@ -176,6 +183,7 @@ class NotificationService:
                         subject,
                         message,
                         user.telegram_chat_id,
+                        event_key,
                     )
                 )
 
@@ -185,10 +193,10 @@ class NotificationService:
             if recipient
         )
         if not recipients:
-            results.append(self._deliver(event_type, "EMAIL", "", subject, message, None))
+            results.append(self._deliver(event_type, "EMAIL", "", subject, message, None, event_key))
         else:
             for recipient in recipients:
-                results.append(self._deliver(event_type, "EMAIL", recipient, subject, message, recipient))
+                results.append(self._deliver(event_type, "EMAIL", recipient, subject, message, recipient, event_key))
         return results
 
     def send_test_email(self) -> dict[str, object]:
@@ -231,14 +239,45 @@ class NotificationService:
             user.telegram_chat_id,
         )
 
-    def enqueue_notification(self, event_type: str, subject: str, message: str, *, dedupe_key: str) -> dict[str, object]:
+    def enqueue_notification(
+        self,
+        event_type: str,
+        subject: str,
+        message: str,
+        *,
+        dedupe_key: str,
+        event_key: str | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "event_type": event_type,
+            "subject": subject,
+            "message": message,
+        }
+        if event_key is not None:
+            payload["event_key"] = event_key
         job = enqueue_job(
             self.session,
             "notification.delivery",
-            {"event_type": event_type, "subject": subject, "message": message},
+            payload,
             dedupe_key=dedupe_key,
         )
         return {"job_id": job.id, "status": job.status}
+
+    def stage_notification(
+        self,
+        event_key: str,
+        event_type: str,
+        subject: str,
+        message: str,
+    ) -> dict[str, object]:
+        outbox = stage_notification_outbox(
+            self.session,
+            event_key,
+            event_type,
+            subject,
+            message,
+        )
+        return {"outbox_id": outbox.id, "status": outbox.status}
 
     def create_link_token(self, user: User) -> dict[str, object]:
         token = secrets.token_urlsafe(32)
@@ -363,7 +402,25 @@ class NotificationService:
         subject: str,
         message: str,
         target: str | None,
+        event_key: str | None = None,
     ) -> dict[str, object]:
+        delivery = None
+        if event_key is not None:
+            idempotency_key = hashlib.sha256(
+                f"{event_key}|{channel}|{recipient}".encode("utf-8")
+            ).hexdigest()
+            delivery, should_send = self.repository.claim_delivery(
+                event_type,
+                channel,
+                recipient,
+                idempotency_key,
+            )
+            if not should_send:
+                return {
+                    "delivery_id": delivery.id,
+                    "channel": channel,
+                    "status": "SENT" if delivery.status == "SENT" else "IN_PROGRESS",
+                }
         try:
             if target is None:
                 raise RuntimeError("No recipient configured or linked")
@@ -392,7 +449,13 @@ class NotificationService:
             status = "SENT"
             error = None
         increment_metric("notification_failure_total" if status == "FAILED" else "notification_success_total")
-        entry = self.repository.log_delivery(event_type, channel, recipient, status, error)
+        if delivery is None:
+            entry = self.repository.log_delivery(event_type, channel, recipient, status, error)
+        else:
+            claim_token = delivery.claim_token
+            if not claim_token:
+                return {"delivery_id": delivery.id, "channel": channel, "status": "IN_PROGRESS"}
+            entry = self.repository.finish_delivery(delivery.id, status, error, claim_token=claim_token)
         publish_realtime_event(
             "notification.delivery",
             "NOTIFICATION",

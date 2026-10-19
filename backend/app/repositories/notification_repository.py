@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
@@ -11,8 +12,14 @@ from app.models.notification import NotificationDelivery, TelegramLinkToken
 
 
 class NotificationRepository:
+    DELIVERY_LEASE_SECONDS = 300
+
     def __init__(self, session: Session):
         self.session = session
+
+    @staticmethod
+    def _new_claim_token() -> str:
+        return uuid4().hex
 
     def log_delivery(
         self,
@@ -32,6 +39,91 @@ class NotificationRepository:
         self.session.add(delivery)
         self.session.commit()
         self.session.refresh(delivery)
+        return delivery
+
+    def claim_delivery(
+        self,
+        event_type: str,
+        channel: str,
+        recipient: str,
+        idempotency_key: str,
+    ) -> tuple[NotificationDelivery, bool]:
+        now = datetime.now(timezone.utc)
+        delivery = (
+            self.session.query(NotificationDelivery)
+            .filter(NotificationDelivery.idempotency_key == idempotency_key)
+            .with_for_update()
+            .first()
+        )
+        if delivery is not None:
+            if delivery.status == "SENT":
+                return delivery, False
+            if delivery.status == "PROCESSING" and delivery.locked_at is not None:
+                locked_at = delivery.locked_at
+                if locked_at.tzinfo is None:
+                    locked_at = locked_at.replace(tzinfo=timezone.utc)
+                if locked_at > now - timedelta(seconds=self.DELIVERY_LEASE_SECONDS):
+                    return delivery, False
+            delivery.status = "PROCESSING"
+            delivery.error = None
+            delivery.attempts += 1
+            delivery.locked_at = now
+            delivery.claim_token = self._new_claim_token()
+            self.session.commit()
+            return delivery, True
+
+        delivery = NotificationDelivery(
+            event_type=event_type,
+            channel=channel,
+            recipient=recipient,
+            status="PROCESSING",
+            idempotency_key=idempotency_key,
+            attempts=1,
+            locked_at=now,
+            claim_token=self._new_claim_token(),
+        )
+        self.session.add(delivery)
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            existing = (
+                self.session.query(NotificationDelivery)
+                .filter(NotificationDelivery.idempotency_key == idempotency_key)
+                .first()
+            )
+            if existing is None:
+                raise
+            return self.claim_delivery(event_type, channel, recipient, idempotency_key)
+        self.session.refresh(delivery)
+        return delivery, True
+
+    def finish_delivery(
+        self,
+        delivery_id: int,
+        status: str,
+        error: str | None = None,
+        *,
+        claim_token: str,
+    ) -> NotificationDelivery:
+        updated = self.session.execute(
+            update(NotificationDelivery)
+            .where(
+                NotificationDelivery.id == delivery_id,
+                NotificationDelivery.status == "PROCESSING",
+                NotificationDelivery.claim_token == claim_token,
+            )
+            .values(
+                status=status,
+                error=error,
+                locked_at=None,
+                claim_token=None,
+            )
+        )
+        self.session.commit()
+        delivery = self.session.get(NotificationDelivery, delivery_id)
+        if delivery is None:
+            raise LookupError(f"Notification delivery {delivery_id} not found")
         return delivery
 
     def linked_users(self) -> list[User]:

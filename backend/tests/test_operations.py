@@ -22,7 +22,8 @@ def test_background_jobs_are_deduplicated_and_retryable() -> None:
     claimed = claim_job(session)
     assert first.id == duplicate.id
     assert claimed is not None
-    mark_job_failed(session, claimed.id, "RuntimeError")
+    assert claimed.claim_token is not None
+    mark_job_failed(session, claimed.id, "RuntimeError", claim_token=claimed.claim_token)
     assert session.get(operations.BackgroundJob, claimed.id).status == "RETRY"
     session.close()
 

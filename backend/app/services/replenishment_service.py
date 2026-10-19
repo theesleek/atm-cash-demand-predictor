@@ -5,6 +5,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.auth import User
 from app.models.replenishment import Replenishment
 from app.repositories.cash_inventory_repository import CashInventoryRepository
@@ -39,7 +40,14 @@ class ReplenishmentService:
         self.inventory_repository = CashInventoryRepository(session)
         self.audit = AuditService(session)
 
-    def _notify(self, event_type: str, replenishment: Replenishment, detail: str = "") -> None:
+    def _notify(
+        self,
+        event_type: str,
+        replenishment: Replenishment,
+        detail: str = "",
+        *,
+        stage: bool = False,
+    ) -> None:
         from app.services.notification_service import NotificationService
         from app.core.config import settings
 
@@ -51,10 +59,21 @@ class ReplenishmentService:
             message = f"{message} {detail}"
         service = NotificationService(self.session)
         event = f"REPLENISHMENT_{event_type}"
-        if settings.async_notifications:
-            service.enqueue_notification(event, f"Replenishment {event_type.lower()}", message, dedupe_key=f"{event}:{replenishment.id}")
+        event_key = f"{event}:{replenishment.id}"
+        if stage:
+            service.stage_notification(
+                event_key,
+                event,
+                f"Replenishment {event_type.lower()}",
+                message,
+            )
         else:
-            service.notify(event, f"Replenishment {event_type.lower()}", message)
+            service.notify(
+                event,
+                f"Replenishment {event_type.lower()}",
+                message,
+                event_key=event_key,
+            )
 
     def _publish(self, event_type: str, replenishment: Replenishment, source: ActionSource) -> None:
         publish_realtime_event(
@@ -108,9 +127,12 @@ class ReplenishmentService:
         )
         saved = self.repository.create(replenishment, commit=False)
         self._audit(actor.id, "REPLENISHMENT_CREATED", saved, source, {"status": saved.status}, commit=False)
+        if saved.status == "REQUESTED" and settings.async_notifications:
+            self._notify("REQUESTED", saved, stage=True)
         self._commit()
-        if saved.status == "REQUESTED":
+        if saved.status == "REQUESTED" and not settings.async_notifications:
             self._notify("REQUESTED", saved)
+        if saved.status == "REQUESTED":
             self._publish("REQUESTED", saved, source)
         return self._serialize(saved)
 
@@ -121,8 +143,11 @@ class ReplenishmentService:
         replenishment.status = "REQUESTED"
         saved = self.repository.save(replenishment, commit=False)
         self._audit(actor.id, "REPLENISHMENT_REQUESTED", saved, source, commit=False)
+        if settings.async_notifications:
+            self._notify("REQUESTED", saved, stage=True)
         self._commit()
-        self._notify("REQUESTED", saved)
+        if not settings.async_notifications:
+            self._notify("REQUESTED", saved)
         self._publish("REQUESTED", saved, source)
         return self._serialize(saved)
 
@@ -169,8 +194,11 @@ class ReplenishmentService:
             replenishment.notes = notes
         saved = self.repository.save(replenishment, commit=False)
         self._audit(actor.id, "REPLENISHMENT_APPROVED", saved, source, {"approved_amount": amount}, commit=False)
+        if settings.async_notifications:
+            self._notify("APPROVED", saved, f"Approved amount {amount:.2f}.", stage=True)
         self._commit()
-        self._notify("APPROVED", saved, f"Approved amount {amount:.2f}.")
+        if not settings.async_notifications:
+            self._notify("APPROVED", saved, f"Approved amount {amount:.2f}.")
         self._publish("APPROVED", saved, source)
         return self._serialize(saved)
 
@@ -182,8 +210,11 @@ class ReplenishmentService:
         replenishment.reason = reason
         saved = self.repository.save(replenishment, commit=False)
         self._audit(actor.id, "REPLENISHMENT_REJECTED", saved, source, {"reason": reason}, commit=False)
+        if settings.async_notifications:
+            self._notify("REJECTED", saved, f"Reason: {reason}", stage=True)
         self._commit()
-        self._notify("REJECTED", saved, f"Reason: {reason}")
+        if not settings.async_notifications:
+            self._notify("REJECTED", saved, f"Reason: {reason}")
         self._publish("REJECTED", saved, source)
         return self._serialize(saved)
 
@@ -226,8 +257,11 @@ class ReplenishmentService:
             replenishment.notes = notes
         saved = self.repository.save(replenishment, commit=False)
         self._audit(actor.id, "REPLENISHMENT_COMPLETED", saved, source, commit=False)
+        if settings.async_notifications:
+            self._notify("COMPLETED", saved, stage=True)
         self._commit()
-        self._notify("COMPLETED", saved)
+        if not settings.async_notifications:
+            self._notify("COMPLETED", saved)
         self._publish("COMPLETED", saved, source)
         return self._serialize(saved)
 

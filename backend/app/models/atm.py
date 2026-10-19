@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, text as sql_text
 from sqlalchemy.orm import Mapped, relationship, mapped_column
 
 from app.db.base import Base
@@ -126,4 +126,13 @@ class Alert(Base):
         CheckConstraint("status IN ('OPEN', 'ACKNOWLEDGED', 'RESOLVED')", name="ck_alerts_status"),
         CheckConstraint("action_source IN ('SYSTEM', 'WEB', 'API', 'TELEGRAM')", name="ck_alerts_action_source"),
         Index("ix_alerts_atm_status", "atm_id", "status"),
+        Index(
+            "ix_alerts_active_risk_unique",
+            "atm_id",
+            "alert_type",
+            "severity",
+            unique=True,
+            postgresql_where=sql_text("status IN ('OPEN', 'ACKNOWLEDGED')"),
+            sqlite_where=sql_text("status IN ('OPEN', 'ACKNOWLEDGED')"),
+        ),
     )

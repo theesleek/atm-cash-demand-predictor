@@ -229,6 +229,33 @@ def test_manager_approves_web_only_then_schedule_and_complete(replenishment_envi
     assert audit_response.json()[1]["username"] == users["BANK_MANAGER"].username
 
 
+def test_business_transitions_remain_committed_when_notification_fails(
+    replenishment_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, users, atm, forecast = replenishment_environment
+    monkeypatch.setattr(NotificationService, "notify", lambda *_args, **_kwargs: [{"status": "FAILED"}])
+    officer_token = create_access_token(users["OPERATIONS_OFFICER"].id, users["OPERATIONS_OFFICER"].token_version)
+    manager_token = create_access_token(users["BANK_MANAGER"].id, users["BANK_MANAGER"].token_version)
+
+    created = client.post(
+        "/replenishments",
+        json={"atm_id": atm.atm_code, "requested_amount": 1800.0, "forecast_id": forecast.id},
+        headers=_headers(officer_token),
+    )
+    replenishment_id = created.json()["replenishment_id"]
+    approved = client.post(
+        f"/replenishments/{replenishment_id}/approve",
+        json={},
+        headers=_headers(manager_token),
+    )
+
+    assert created.status_code == 201
+    assert created.json()["status"] == "REQUESTED"
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "APPROVED"
+
+
 def test_officer_cannot_approve_and_manager_can_reject(replenishment_environment) -> None:
     client, _, users, atm, _ = replenishment_environment
     officer_token = create_access_token(

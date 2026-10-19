@@ -48,23 +48,42 @@ class AlertService:
 
         message = f"{normalized_severity} cash risk for {atm_code}: projected cash is {projected_cash:.2f}."
         is_new_alert = self.repository.get_active_risk_alert(atm_id, normalized_severity) is None
+        notification_required = is_new_alert and normalized_severity in {"HIGH", "CRITICAL"}
+        async_notification = False
+        if notification_required:
+            from app.core.config import settings
+
+            async_notification = settings.async_notifications
+
         alert = self.repository.upsert_risk_alert(
             atm_id=atm_id,
             forecast_id=forecast_id,
             severity=normalized_severity,
             message=message,
             action_source="SYSTEM",
+            commit=not (notification_required and async_notification),
         )
-        if is_new_alert and normalized_severity in {"HIGH", "CRITICAL"}:
+        if notification_required:
             from app.services.notification_service import NotificationService
             from app.core.config import settings
 
             service = NotificationService(self.repository.session)
             event = f"RISK_{normalized_severity}"
             if settings.async_notifications:
-                service.enqueue_notification(event, f"{normalized_severity} cash risk: {atm_code}", message, dedupe_key=f"{event}:{alert.id}")
+                service.stage_notification(
+                    f"{event}:{alert.id}",
+                    event,
+                    f"{normalized_severity} cash risk: {atm_code}",
+                    message,
+                )
+                self.repository.session.commit()
             else:
-                service.notify(event, f"{normalized_severity} cash risk: {atm_code}", message)
+                service.notify(
+                    event,
+                    f"{normalized_severity} cash risk: {atm_code}",
+                    message,
+                    event_key=f"{event}:{alert.id}",
+                )
         if is_new_alert:
             publish_realtime_event(
                 "alert.created",

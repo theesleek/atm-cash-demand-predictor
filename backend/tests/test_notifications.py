@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import smtplib
 
 import pytest
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.permissions import ROLE_DESCRIPTIONS
+from app.core import config as config_module
 from app.db.base import Base
 from app.core.security import create_access_token
 from app.db.session import get_db
@@ -20,7 +21,11 @@ from app.main import app
 from app.models.atm import ATM, Alert, Forecast
 from app.models.auth import Role, User
 from app.models.notification import NotificationDelivery
+from app.models.operations import BackgroundJob, NotificationOutbox
 from app.models.replenishment import Replenishment
+from app.jobs import queue as queue_module
+from app.jobs import worker as worker_module
+from app.repositories.notification_repository import NotificationRepository
 from app.services import notification_service as notification_module
 from app.api.routes import notifications as notification_routes
 from app.services.alert_service import AlertService
@@ -30,6 +35,10 @@ from app.services.notification_service import (
     verify_webhook_secret,
 )
 from app.services.replenishment_service import ReplenishmentService
+from app.services import replenishment_service as replenishment_module
+
+
+REAL_NOTIFY = NotificationService.notify
 
 
 @pytest.fixture
@@ -598,7 +607,13 @@ def test_required_lifecycle_events_dispatch_notifications(
 ) -> None:
     events: list[str] = []
 
-    def record_event(self: NotificationService, event_type: str, _subject: str, _message: str):
+    def record_event(
+        self: NotificationService,
+        event_type: str,
+        _subject: str,
+        _message: str,
+        **_kwargs: object,
+    ):
         events.append(event_type)
         return []
 
@@ -634,3 +649,402 @@ def test_required_lifecycle_events_dispatch_notifications(
     assert "REPLENISHMENT_APPROVED" in events
     assert "REPLENISHMENT_REJECTED" in events
     assert "REPLENISHMENT_COMPLETED" in events
+
+
+def test_automatic_retry_skips_successful_recipients(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _test_settings(monkeypatch, recipients=())
+    monkeypatch.setattr(NotificationService, "notify", REAL_NOTIFY)
+    first_user = notification_session.query(User).filter(User.username == "notice-manager").one()
+    second_user = notification_session.query(User).filter(User.username == "notice-admin").one()
+    first_user.telegram_chat_id = "retry-chat-1"
+    second_user.telegram_chat_id = "retry-chat-2"
+    notification_session.commit()
+
+    calls: list[str] = []
+    fail_once = {"retry-chat-2": True}
+
+    def sender(chat_id: str, _body: str) -> None:
+        calls.append(chat_id)
+        if fail_once.get(chat_id):
+            fail_once[chat_id] = False
+            raise RuntimeError("provider unavailable")
+
+    service = NotificationService(notification_session, telegram_sender=sender, email_sender=lambda *_args: None)
+    first_result = service.notify(
+        "RISK_HIGH",
+        "High risk",
+        "ATM needs cash",
+        event_key="RISK_HIGH:retry-alert",
+    )
+    second_result = service.notify(
+        "RISK_HIGH",
+        "High risk",
+        "ATM needs cash",
+        event_key="RISK_HIGH:retry-alert",
+    )
+
+    assert [entry["status"] for entry in first_result if entry["channel"] == "TELEGRAM"] == ["SENT", "FAILED"]
+    assert [entry["status"] for entry in second_result if entry["channel"] == "TELEGRAM"] == ["SENT", "SENT"]
+    assert calls == ["retry-chat-1", "retry-chat-2", "retry-chat-2"]
+    deliveries = (
+        notification_session.query(NotificationDelivery)
+        .filter(NotificationDelivery.channel == "TELEGRAM")
+        .all()
+    )
+    assert len(deliveries) == 2
+    assert all(delivery.status == "SENT" for delivery in deliveries)
+    assert sorted(delivery.attempts for delivery in deliveries) == [1, 2]
+
+
+def test_total_provider_failure_can_succeed_on_bounded_retry(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _test_settings(monkeypatch, recipients=())
+    monkeypatch.setattr(NotificationService, "notify", REAL_NOTIFY)
+    user = notification_session.query(User).filter(User.username == "notice-manager").one()
+    user.telegram_chat_id = "total-retry-chat"
+    notification_session.commit()
+    calls = {"count": 0}
+
+    def sender(_chat_id: str, _body: str) -> None:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("temporary provider failure")
+
+    service = NotificationService(notification_session, telegram_sender=sender, email_sender=lambda *_args: None)
+    first = service.notify("RISK_CRITICAL", "Critical risk", "ATM needs cash", event_key="RISK_CRITICAL:retry")
+    second = service.notify("RISK_CRITICAL", "Critical risk", "ATM needs cash", event_key="RISK_CRITICAL:retry")
+
+    assert [entry["status"] for entry in first if entry["channel"] == "TELEGRAM"] == ["FAILED"]
+    assert [entry["status"] for entry in second if entry["channel"] == "TELEGRAM"] == ["SENT"]
+    delivery = notification_session.query(NotificationDelivery).filter_by(channel="TELEGRAM").one()
+    assert delivery.status == "SENT"
+    assert delivery.attempts == 2
+
+
+def test_worker_retries_failed_notification_and_marks_success(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = queue_module.enqueue_job(
+        notification_session,
+        "notification.delivery",
+        {
+            "event_key": "RISK_HIGH:worker-retry",
+            "event_type": "RISK_HIGH",
+            "subject": "High risk",
+            "message": "ATM needs cash",
+        },
+        dedupe_key="RISK_HIGH:worker-retry",
+        max_attempts=2,
+    )
+    outcomes = [[{"status": "FAILED"}], [{"status": "SENT"}]]
+
+    class FakeNotificationService:
+        def __init__(self, _session: Session):
+            pass
+
+        def notify(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return outcomes.pop(0)
+
+    monkeypatch.setattr(worker_module, "SessionLocal", lambda: notification_session)
+    monkeypatch.setattr(worker_module, "NotificationService", FakeNotificationService)
+
+    assert worker_module.process_one()
+    notification_session.expire_all()
+    assert notification_session.get(BackgroundJob, job.id).status == "RETRY"
+    retried_job = notification_session.get(BackgroundJob, job.id)
+    assert retried_job is not None
+    retried_job.available_at = datetime.now(timezone.utc)
+    notification_session.commit()
+
+    assert worker_module.process_one()
+    notification_session.expire_all()
+    assert notification_session.get(BackgroundJob, job.id).status == "SUCCEEDED"
+
+
+def test_worker_marks_permanent_notification_failure_after_retry_limit(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = queue_module.enqueue_job(
+        notification_session,
+        "notification.delivery",
+        {
+            "event_key": "RISK_CRITICAL:worker-failure",
+            "event_type": "RISK_CRITICAL",
+            "subject": "Critical risk",
+            "message": "ATM needs cash",
+        },
+        dedupe_key="RISK_CRITICAL:worker-failure",
+        max_attempts=2,
+    )
+
+    class FailedNotificationService:
+        def __init__(self, _session: Session):
+            pass
+
+        def notify(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return [{"status": "FAILED"}]
+
+    monkeypatch.setattr(worker_module, "SessionLocal", lambda: notification_session)
+    monkeypatch.setattr(worker_module, "NotificationService", FailedNotificationService)
+
+    assert worker_module.process_one()
+    failed_job = notification_session.get(BackgroundJob, job.id)
+    assert failed_job is not None
+    failed_job.available_at = datetime.now(timezone.utc)
+    notification_session.commit()
+    assert worker_module.process_one()
+    notification_session.expire_all()
+    assert notification_session.get(BackgroundJob, job.id).status == "FAILED"
+
+
+def test_outbox_recovers_when_queue_insertion_fails(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outbox = queue_module.stage_notification(
+        notification_session,
+        "REPLENISHMENT_REQUESTED:42",
+        "REPLENISHMENT_REQUESTED",
+        "Replenishment requested",
+        "ATM needs cash",
+    )
+    notification_session.commit()
+    original_add = notification_session.add
+
+    def fail_background_job_add(instance: object) -> None:
+        if isinstance(instance, BackgroundJob):
+            raise RuntimeError("queue temporarily unavailable")
+        original_add(instance)
+
+    monkeypatch.setattr(notification_session, "add", fail_background_job_add)
+    assert queue_module.dispatch_outbox_once(notification_session)
+    notification_session.expire_all()
+    assert notification_session.get(NotificationOutbox, outbox.id).status == "RETRY"
+
+    monkeypatch.setattr(notification_session, "add", original_add)
+    retry_outbox = notification_session.get(NotificationOutbox, outbox.id)
+    assert retry_outbox is not None
+    retry_outbox.available_at = datetime.now(timezone.utc)
+    notification_session.commit()
+    assert queue_module.dispatch_outbox_once(notification_session)
+    notification_session.expire_all()
+    assert notification_session.get(NotificationOutbox, outbox.id).status == "DISPATCHED"
+    assert notification_session.query(BackgroundJob).filter_by(dedupe_key="REPLENISHMENT_REQUESTED:42").count() == 1
+
+
+def test_alert_and_replenishment_stage_outbox_in_async_mode(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async_settings = replace(config_module.settings, async_notifications=True)
+    monkeypatch.setattr(config_module, "settings", async_settings)
+    monkeypatch.setattr(replenishment_module, "settings", async_settings)
+    user = notification_session.query(User).filter(User.username == "notice-manager").one()
+    atm = notification_session.query(ATM).one()
+    forecast = notification_session.query(Forecast).one()
+
+    alert = AlertService(notification_session).create_or_update_risk_alert(
+        atm.id,
+        atm.atm_code,
+        forecast.id,
+        "HIGH",
+        400.0,
+    )
+    request = ReplenishmentService(notification_session).create(
+        user,
+        atm.atm_code,
+        500.0,
+        forecast.id,
+        True,
+        None,
+        "WEB",
+    )
+
+    assert alert is not None
+    assert notification_session.query(NotificationOutbox).count() == 2
+    assert notification_session.query(NotificationOutbox).filter_by(event_key=f"RISK_HIGH:{alert.id}").one()
+    assert notification_session.query(NotificationOutbox).filter_by(
+        event_key=f"REPLENISHMENT_REQUESTED:{request['replenishment_id']}"
+    ).one()
+
+
+def test_stale_processing_job_is_recovered(
+    notification_session: Session,
+) -> None:
+    job = queue_module.enqueue_job(
+        notification_session,
+        "notification.delivery",
+        {"event_type": "TEST", "subject": "Test", "message": "Body"},
+        dedupe_key="stale-job",
+        max_attempts=3,
+    )
+    job.status = "PROCESSING"
+    job.attempts = 1
+    job.locked_at = datetime.now(timezone.utc).replace(year=2020)
+    notification_session.commit()
+
+    claimed = queue_module.claim_job(notification_session)
+
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == "PROCESSING"
+    assert claimed.attempts == 2
+    assert claimed.claim_token is not None
+
+
+def test_expired_job_claim_cannot_finalize_after_recovery(
+    notification_session: Session,
+) -> None:
+    job = queue_module.enqueue_job(
+        notification_session,
+        "notification.delivery",
+        {"event_type": "TEST", "subject": "Test", "message": "Body"},
+        dedupe_key="fenced-job",
+        max_attempts=3,
+    )
+    job.status = "PROCESSING"
+    job.attempts = 1
+    job.locked_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    job.claim_token = "expired-worker"
+    notification_session.commit()
+
+    reclaimed = queue_module.claim_job(notification_session)
+    assert reclaimed is not None
+    assert reclaimed.claim_token not in {None, "expired-worker"}
+
+    assert not queue_module.mark_job_succeeded(notification_session, job.id, "expired-worker")
+    notification_session.expire_all()
+    current = notification_session.get(BackgroundJob, job.id)
+    assert current is not None
+    assert current.status == "PROCESSING"
+
+    assert queue_module.mark_job_failed(
+        notification_session,
+        job.id,
+        "RuntimeError",
+        claim_token=reclaimed.claim_token,
+    )
+    notification_session.expire_all()
+    assert notification_session.get(BackgroundJob, job.id).status == "RETRY"
+
+
+def test_expired_delivery_claim_cannot_overwrite_newer_result(
+    notification_session: Session,
+) -> None:
+    repository = NotificationRepository(notification_session)
+    first, should_send = repository.claim_delivery(
+        "RISK_HIGH",
+        "TELEGRAM",
+        "fenced-chat",
+        "fenced-delivery",
+    )
+    assert should_send
+    assert first.claim_token is not None
+    old_token = first.claim_token
+    first.locked_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    notification_session.commit()
+
+    second, should_send = repository.claim_delivery(
+        "RISK_HIGH",
+        "TELEGRAM",
+        "fenced-chat",
+        "fenced-delivery",
+    )
+    assert should_send
+    assert second.claim_token not in {None, old_token}
+
+    stale_result = repository.finish_delivery(
+        first.id,
+        "FAILED",
+        "RuntimeError",
+        claim_token=old_token,
+    )
+    assert stale_result.status == "PROCESSING"
+
+    final = repository.finish_delivery(
+        second.id,
+        "SENT",
+        claim_token=second.claim_token,
+    )
+    assert final.status == "SENT"
+
+
+def test_expired_outbox_claim_cannot_overwrite_newer_state(
+    notification_session: Session,
+) -> None:
+    outbox = queue_module.stage_notification(
+        notification_session,
+        "RISK_HIGH:fenced-outbox",
+        "RISK_HIGH",
+        "High risk",
+        "ATM needs cash",
+    )
+    notification_session.commit()
+    outbox.status = "PROCESSING"
+    outbox.attempts = 1
+    outbox.locked_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    outbox.claim_token = "expired-outbox-worker"
+    notification_session.commit()
+
+    queue_module._recover_stale_outbox(notification_session, datetime.now(timezone.utc))
+    current = notification_session.get(NotificationOutbox, outbox.id)
+    assert current is not None
+    assert current.status == "RETRY"
+    assert current.claim_token is None
+
+    current.status = "PROCESSING"
+    current.locked_at = datetime.now(timezone.utc)
+    current.claim_token = "newer-outbox-worker"
+    notification_session.commit()
+
+    queue_module._mark_outbox_dispatch_failed(
+        notification_session,
+        outbox.id,
+        "expired-outbox-worker",
+        "RuntimeError",
+    )
+    notification_session.expire_all()
+    current = notification_session.get(NotificationOutbox, outbox.id)
+    assert current is not None
+    assert current.status == "PROCESSING"
+    assert current.claim_token == "newer-outbox-worker"
+
+
+def test_duplicate_outbox_staging_preserves_callers_transaction(
+    notification_session: Session,
+) -> None:
+    first = queue_module.stage_notification(
+        notification_session,
+        "RISK_HIGH:atomic-event",
+        "RISK_HIGH",
+        "High risk",
+        "ATM needs cash",
+    )
+    notification_session.commit()
+
+    marker = Replenishment(
+        atm_id=notification_session.query(ATM).one().id,
+        requested_amount=123.0,
+        status="DRAFT",
+        requested_by=notification_session.query(User).filter(User.username == "notice-manager").one().id,
+    )
+    notification_session.add(marker)
+    duplicate = queue_module.stage_notification(
+        notification_session,
+        "RISK_HIGH:atomic-event",
+        "RISK_HIGH",
+        "Changed subject must not replace original",
+        "Changed message must not replace original",
+    )
+    notification_session.commit()
+
+    assert duplicate.id == first.id
+    assert notification_session.get(Replenishment, marker.id) is not None
+    assert notification_session.query(NotificationOutbox).filter_by(event_key="RISK_HIGH:atomic-event").count() == 1

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -158,6 +159,29 @@ def test_duplicate_active_condition_updates_existing_alert(alert_database: tuple
     assert updated_alert.forecast_id == second_forecast.id
     assert updated_alert.message.endswith("700.00.")
     assert session.query(Alert).count() == 1
+
+
+def test_active_alert_uniqueness_is_enforced_by_database(
+    alert_database: tuple[Session, int, int],
+) -> None:
+    session, atm_id, forecast_id = alert_database
+    first = AlertService(session).create_or_update_risk_alert(
+        atm_id, "ATM-TEST", forecast_id, "HIGH", 400.0
+    )
+    assert first is not None
+    duplicate = Alert(
+        atm_id=atm_id,
+        forecast_id=forecast_id,
+        alert_type="CASH_RISK",
+        severity="HIGH",
+        status="OPEN",
+        message="duplicate",
+        action_source="SYSTEM",
+    )
+    session.add(duplicate)
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
 
 
 def test_acknowledge_and_resolve_record_actor_and_source(alert_database: tuple[Session, int, int]) -> None:

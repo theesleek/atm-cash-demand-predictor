@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -18,7 +18,15 @@ class NotificationDelivery(Base):
     recipient: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_notification_deliveries_idempotency_key", "idempotency_key", unique=True),
+    )
 
 
 class TelegramLinkToken(Base):
