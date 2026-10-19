@@ -9,6 +9,7 @@ from app.ml.model_loader import ModelConfigurationError
 from app.models.auth import User
 from app.schemas.atm import ATMCreate, ATMUpdate
 from app.services.atm_service import ATMService
+from app.services.daily_automation_service import DailyAutomationService
 
 router = APIRouter(tags=["atms"])
 
@@ -132,3 +133,11 @@ def dashboard_summary(
     _user: User = Depends(require_permission("dashboard:read")),
 ) -> dict[str, object]:
     return ATMService(db).get_dashboard_summary()
+
+
+@router.get("/automation/status")
+def automation_status(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_permission("dashboard:read")),
+) -> dict[str, object]:
+    return DailyAutomationService.status(db)

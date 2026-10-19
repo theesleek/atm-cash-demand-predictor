@@ -301,7 +301,9 @@ class ATMService:
             daily_demand=float(record.daily_demand),
             capacity=capacity,
         )
-        persisted_forecast = self.forecast_repository.create(
+        alert = None
+        notification = {"status": "not_applicable"}
+        persisted_forecast, forecast_created = self.forecast_repository.get_or_create(
             atm_id=record.id,
             predicted_demand=forecast.predicted_demand,
             risk_level=forecast.risk_level,
@@ -313,15 +315,25 @@ class ATMService:
             risk_evaluation_reason=forecast.risk_evaluation_reason,
         )
         if forecast.risk_level is not None and forecast.projected_cash is not None:
-            self.alert_service.create_or_update_risk_alert(
+            alert = self.alert_service.create_or_update_risk_alert(
                 atm_id=record.id,
                 atm_code=record.atm_code,
                 forecast_id=persisted_forecast.id,
                 severity=forecast.risk_level,
                 projected_cash=forecast.projected_cash,
             )
+            if alert is not None and forecast.risk_level.upper() in {"HIGH", "CRITICAL"}:
+                from app.services.notification_service import NotificationService
+
+                event_type = f"RISK_{forecast.risk_level.upper()}"
+                notification = NotificationService(self.session).notification_status(
+                    event_type,
+                    f"{event_type}:{alert.id}",
+                )
         return {
             "atm_id": forecast.atm_id,
+            "forecast_id": persisted_forecast.id,
+            "alert_id": alert.id if alert is not None else None,
             "forecast_date": forecast.forecast_date,
             "predicted_demand": forecast.predicted_demand,
             "predicted_signed_net_cash_flow": forecast.predicted_signed_net_cash_flow,
@@ -343,6 +355,8 @@ class ATMService:
             "safety_buffer": forecast.safety_buffer,
             "inventory_source": "cash_inventory" if inventory is not None else "atm_record_fallback",
             "forecast_source": forecast.source,
+            "forecast_created": forecast_created,
+            "notification": notification,
         }
 
     def get_dashboard_summary(self) -> dict[str, object]:

@@ -58,6 +58,8 @@ class Settings:
     db_pool_timeout_seconds: int = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
     request_body_limit_bytes: int = int(os.getenv("REQUEST_BODY_LIMIT_BYTES", "1048576"))
     async_notifications: bool = os.getenv("ASYNC_NOTIFICATIONS", "false").lower() == "true"
+    daily_automation_enabled: bool = os.getenv("DAILY_AUTOMATION_ENABLED", "false").lower() == "true"
+    daily_automation_max_data_age_days: int = int(os.getenv("DAILY_AUTOMATION_MAX_DATA_AGE_DAYS", "2"))
 
     def validate(self) -> None:
         if self.environment not in {"development", "test", "production"}:
@@ -66,6 +68,8 @@ class Settings:
             raise RuntimeError("JWT_EXPIRATION_MINUTES must be at least 1")
         if self.login_rate_limit_attempts < 1 or self.login_rate_limit_window_seconds < 1:
             raise RuntimeError("Login rate-limit settings must be positive")
+        if self.daily_automation_max_data_age_days < 0:
+            raise RuntimeError("DAILY_AUTOMATION_MAX_DATA_AGE_DAYS must be non-negative")
         if self.notification_email_provider not in {"smtp", "gmail_api"}:
             raise RuntimeError("NOTIFICATION_EMAIL_PROVIDER must be smtp or gmail_api")
         if self.environment == "production":

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.auth import User
 from app.models.notification import NotificationDelivery, TelegramLinkToken
+from app.models.operations import NotificationOutbox
 
 
 class NotificationRepository:
@@ -125,6 +126,26 @@ class NotificationRepository:
         if delivery is None:
             raise LookupError(f"Notification delivery {delivery_id} not found")
         return delivery
+
+    def get_outbox_event(self, event_key: str) -> NotificationOutbox | None:
+        return self.session.query(NotificationOutbox).filter(NotificationOutbox.event_key == event_key).first()
+
+    def get_deliveries_for_event(
+        self,
+        event_type: str,
+        idempotency_keys: list[str],
+    ) -> list[NotificationDelivery]:
+        if not idempotency_keys:
+            return []
+        return (
+            self.session.query(NotificationDelivery)
+            .filter(
+                NotificationDelivery.event_type == event_type,
+                NotificationDelivery.idempotency_key.in_(idempotency_keys),
+            )
+            .order_by(NotificationDelivery.id.asc())
+            .all()
+        )
 
     def linked_users(self) -> list[User]:
         return (

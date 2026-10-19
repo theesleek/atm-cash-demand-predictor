@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, text as sql_text
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text as sql_text
 from sqlalchemy.orm import Mapped, relationship, mapped_column
 
 from app.db.base import Base
@@ -99,6 +99,7 @@ class Forecast(Base):
             name="ck_forecasts_nonnegative_values",
         ),
         CheckConstraint("risk_level IN ('NORMAL', 'WARNING', 'HIGH', 'CRITICAL', 'normal', 'warning', 'high', 'critical')", name="ck_forecasts_risk_level"),
+        UniqueConstraint("atm_id", "forecast_date", "model_version", name="uq_forecasts_atm_date_model"),
         Index("ix_forecasts_atm_date", "atm_id", "forecast_date"),
     )
 

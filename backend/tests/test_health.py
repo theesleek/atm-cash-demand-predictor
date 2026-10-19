@@ -1,15 +1,21 @@
 import os
 import json
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_atm_cash.db"
+import pytest
+
+os.environ["DATABASE_URL"] = f"sqlite:///{Path(tempfile.mkdtemp(prefix='atm-health-tests-')) / 'test_atm_cash.db'}"
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-key-for-phase-seven")
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.db.session import SessionLocal, create_db_and_tables, seed_atm_data, seed_security_data
+from app.db.base import Base
+from app.db.session import get_db, seed_atm_data, seed_security_data
 from app.core.passwords import hash_password
 from app.core.security import create_access_token
 from app.main import app
@@ -18,6 +24,33 @@ from app.ml.model_loader import ModelArtifactCompatibilityError, ModelBundle
 from app.models.atm import ATM, Alert, Forecast
 from app.models.auth import Role, User
 from app.models.ingestion import ATMHistoryRecord, Dataset, DatasetVersion
+
+
+# This module may be collected after another test has imported the application.
+# Use a module-local engine and dependency override rather than rebinding the
+# application's global session factory for other test modules.
+_test_engine = create_engine(os.environ["DATABASE_URL"], connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_test_engine)
+
+
+def create_db_and_tables() -> None:
+    Base.metadata.create_all(bind=_test_engine)
+
+
+def _get_test_db():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture(autouse=True)
+def health_database_override():
+    create_db_and_tables()
+    app.dependency_overrides[get_db] = _get_test_db
+    yield
+    app.dependency_overrides.pop(get_db, None)
 
 client = TestClient(app)
 

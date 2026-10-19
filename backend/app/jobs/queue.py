@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import logging
 from uuid import uuid4
 
@@ -10,6 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.operations import BackgroundJob, NotificationOutbox
 
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 JOB_LEASE_SECONDS = 300
 OUTBOX_LEASE_SECONDS = 300
 DEFAULT_MAX_ATTEMPTS = 5
+DAILY_FORECAST_JOB_TYPE = "daily.forecast_refresh"
 
 
 def _new_claim_token() -> str:
@@ -53,6 +55,54 @@ def enqueue_job(
         return existing
     session.refresh(job)
     return job
+
+
+def daily_forecast_dedupe_key(operational_date: date) -> str:
+    return f"daily-forecast:{operational_date.isoformat()}"
+
+
+def enqueue_daily_forecast_job(
+    session: Session,
+    operational_date: date,
+    *,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+) -> BackgroundJob | None:
+    """Enqueue one operator-enabled daily forecast refresh for a UTC date."""
+    if not settings.daily_automation_enabled:
+        return None
+    return enqueue_job(
+        session,
+        DAILY_FORECAST_JOB_TYPE,
+        {
+            "operational_date": operational_date.isoformat(),
+            "run_status": "QUEUED",
+            "forecasts_created": 0,
+            "skipped_atms": [],
+            "failed_atms": [],
+        },
+        dedupe_key=daily_forecast_dedupe_key(operational_date),
+        max_attempts=max_attempts,
+    )
+
+
+def update_job_payload(
+    session: Session,
+    job_id: int,
+    payload: dict[str, object],
+    *,
+    claim_token: str,
+) -> bool:
+    updated = session.execute(
+        update(BackgroundJob)
+        .where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.status == "PROCESSING",
+            BackgroundJob.claim_token == claim_token,
+        )
+        .values(payload=payload)
+    )
+    session.commit()
+    return bool(updated.rowcount)
 
 
 def stage_notification(

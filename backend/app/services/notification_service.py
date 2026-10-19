@@ -279,6 +279,52 @@ class NotificationService:
         )
         return {"outbox_id": outbox.id, "status": outbox.status}
 
+    def notification_status(self, event_type: str, event_key: str) -> dict[str, object]:
+        """Read persisted notification state without enqueueing or sending anything."""
+        telegram_recipients = [
+            user.telegram_chat_id
+            for user in self.repository.linked_users()
+            if user.telegram_chat_id
+        ] or [""]
+        email_recipients = settings.notification_email_recipients or tuple(
+            recipient
+            for recipient in (settings.smtp_from_email or settings.smtp_username,)
+            if recipient
+        ) or ("",)
+        expected_keys = [
+            hashlib.sha256(f"{event_key}|{channel}|{recipient}".encode("utf-8")).hexdigest()
+            for channel, recipients in (
+                ("TELEGRAM", telegram_recipients),
+                ("EMAIL", email_recipients),
+            )
+            for recipient in recipients
+        ]
+        outbox = self.repository.get_outbox_event(event_key)
+        deliveries = self.repository.get_deliveries_for_event(event_type, expected_keys)
+        delivery_statuses = [delivery.status.upper() for delivery in deliveries]
+        outbox_status = outbox.status.upper() if outbox is not None else None
+
+        if outbox_status == "FAILED" or "FAILED" in delivery_statuses:
+            status = "failed"
+        elif delivery_statuses and all(item == "SENT" for item in delivery_statuses):
+            status = "sent"
+        elif outbox_status in {"PENDING", "RETRY", "PROCESSING", "DISPATCHED"}:
+            status = "pending"
+        elif "PROCESSING" in delivery_statuses:
+            status = "pending"
+        else:
+            # An eligible event with no terminal persisted delivery is not safe
+            # to report as sent; keep it visibly pending until reconciled.
+            status = "pending"
+
+        return {
+            "status": status,
+            "event_type": event_type,
+            "event_key": event_key,
+            "outbox_status": outbox_status,
+            "delivery_statuses": delivery_statuses,
+        }
+
     def create_link_token(self, user: User) -> dict[str, object]:
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + self.LINK_TOKEN_TTL

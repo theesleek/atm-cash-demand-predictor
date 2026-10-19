@@ -209,6 +209,7 @@ function DashboardPage() {
   const [atms, setAtms] = useState(emptyResource);
   const [alerts, setAlerts] = useState(emptyResource);
   const [replenishments, setReplenishments] = useState(emptyResource);
+  const [automation, setAutomation] = useState(emptyResource);
   const [forecast, setForecast] = useState(emptyResource);
   const forecastAtm = useRef(null);
   const seenRealtimeEvents = useRef(null);
@@ -218,13 +219,14 @@ function DashboardPage() {
     const controller = new AbortController();
 
     async function loadOperationalData() {
-      const [summaryResult, atmResult, alertResult, replenishmentResult] = await Promise.allSettled([
+      const [summaryResult, atmResult, alertResult, replenishmentResult, automationResult] = await Promise.allSettled([
         apiRequest('/dashboard/summary', { signal: controller.signal }),
         apiRequest('/atms', { signal: controller.signal }),
         apiRequest('/alerts', { signal: controller.signal }),
         canReadRequests
           ? apiRequest('/replenishments', { signal: controller.signal })
           : Promise.resolve(null),
+        apiRequest('/automation/status', { signal: controller.signal }),
       ]);
       if (controller.signal.aborted) return;
       setSummary(resourceResult(summaryResult));
@@ -235,6 +237,7 @@ function DashboardPage() {
         data: null,
         error: 'PERMISSION_DENIED',
       });
+      setAutomation(resourceResult(automationResult));
     }
 
     loadOperationalData();
@@ -323,6 +326,26 @@ function DashboardPage() {
         <MetricCard label="Open Alerts" value={<MetricValue resource={alerts} value={alerts.data && openAlerts.length} />} icon={Bell} />
         <MetricCard label="Pending Replenishments" value={<MetricValue resource={replenishments} value={replenishments.data && pendingRequests.length} />} icon={PackageCheck} />
       </section>
+
+      <Card title="Daily Intelligence Automation" className="dashboard-wide-card">
+        <ResourceState resource={automation} empty={automation.data?.enabled && !automation.data?.last_job ? 'No daily automation run has been recorded' : null}>
+          {automation.data && !automation.data.enabled ? (
+            <p className="dashboard-data-note">Disabled by configuration. Existing validated actual data and on-demand forecasts remain available.</p>
+          ) : automation.data?.last_job ? (
+            <dl className="dashboard-detail-list">
+              <div><dt>Run status</dt><dd><StatusBadge status={automation.data.last_job.run_status || automation.data.last_job.status} /></dd></div>
+              <div><dt>Operational date</dt><dd>{automation.data.last_job.operational_date || '—'}</dd></div>
+              <div><dt>Last actual date</dt><dd>{automation.data.last_successful_ingestion_date || '—'}</dd></div>
+              <div><dt>Forecast target</dt><dd>{automation.data.last_job.last_forecast_target_date || '—'}</dd></div>
+              <div><dt>Eligible / created</dt><dd>{automation.data.last_job.eligible_atms} / {automation.data.last_job.forecasts_created}</dd></div>
+              <div><dt>Skipped / failed</dt><dd>{automation.data.last_job.skipped_atms?.length || 0} / {automation.data.last_job.failed_atms?.length || 0}</dd></div>
+              <div><dt>Notification delivery</dt><dd>{automation.data.last_job.notification_status || automation.data.notification_status || 'not_applicable'}</dd></div>
+            </dl>
+          ) : (
+            <p className="dashboard-data-note">Enabled, but no daily run has completed yet.</p>
+          )}
+        </ResourceState>
+      </Card>
 
       <div className="dashboard-main-grid">
         <Card title="Cash Demand Forecast" className="dashboard-forecast-card">

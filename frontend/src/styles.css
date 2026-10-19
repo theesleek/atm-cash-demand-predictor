@@ -682,6 +682,11 @@ h2 { margin: 0; font-size: 1rem; font-weight: 600; }
 .dashboard-forecast-card { grid-column: 1; grid-row: span 2; }
 .dashboard-risk-card { grid-column: 2; }
 .dashboard-wide-card { grid-column: 1 / -1; }
+.dashboard-detail-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 18px; margin: 0; }
+.dashboard-detail-list div { display: grid; gap: 5px; border-bottom: 1px solid var(--color-border); padding-bottom: 8px; }
+.dashboard-detail-list dt { color: var(--color-muted); font-size: 0.7rem; }
+.dashboard-detail-list dd { margin: 0; color: #e8eff2; font-size: 0.8rem; }
+@media (max-width: 720px) { .dashboard-detail-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .dashboard-chart-caption { margin: -5px 0 8px; color: var(--color-muted); font-size: 0.72rem; }
 .dashboard-chart { width: 100%; height: 260px; }
 .dashboard-data-note { margin: 12px 0 0; color: #829198; font-size: 0.68rem; line-height: 1.55; }

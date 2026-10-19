@@ -87,10 +87,10 @@ def alerts_api(
         app.dependency_overrides.pop(get_db, None)
 
 
-def _create_forecast(session: Session, atm_id: int) -> Forecast:
+def _create_forecast(session: Session, atm_id: int, forecast_date: datetime | None = None) -> Forecast:
     forecast = Forecast(
         atm_id=atm_id,
-        forecast_date=datetime(2026, 9, 30, tzinfo=timezone.utc),
+        forecast_date=forecast_date or datetime(2026, 9, 30, tzinfo=timezone.utc),
         predicted_demand=1000.0,
         risk_level="WARNING",
         recommended_top_up=500.0,
@@ -147,7 +147,7 @@ def test_duplicate_active_condition_updates_existing_alert(alert_database: tuple
     first_alert = service.create_or_update_risk_alert(
         atm_id, "ATM-TEST", first_forecast_id, "WARNING", 900.0
     )
-    second_forecast = _create_forecast(session, atm_id)
+    second_forecast = _create_forecast(session, atm_id, datetime(2026, 10, 1, tzinfo=timezone.utc))
 
     updated_alert = service.create_or_update_risk_alert(
         atm_id, "ATM-TEST", second_forecast.id, "WARNING", 700.0
@@ -214,7 +214,7 @@ def test_resolved_condition_creates_new_alert(alert_database: tuple[Session, int
     assert old_alert is not None
     service.resolve(old_alert.id, "operator", "WEB")
 
-    next_forecast = _create_forecast(session, atm_id)
+    next_forecast = _create_forecast(session, atm_id, datetime(2026, 10, 1, tzinfo=timezone.utc))
     new_alert = service.create_or_update_risk_alert(
         atm_id, "ATM-TEST", next_forecast.id, "CRITICAL", 0.0
     )
