@@ -7,24 +7,31 @@ from app.ml.inference import ProductionInferenceService
 from app.services.risk_service import CashRiskService
 
 
+RISK_UNAVAILABLE = "UNAVAILABLE"
+RISK_AVAILABLE = "AVAILABLE"
+RISK_UNAVAILABLE_REASON = "Verified withdrawal-demand data is required for demand-based risk evaluation."
+
+
 @dataclass
 class ForecastResult:
     atm_id: str
-    predicted_demand: float
+    predicted_demand: float | None
     predicted_signed_net_cash_flow: float
-    risk_level: str
-    recommended_top_up: float
+    risk_level: str | None
+    recommended_top_up: float | None
     current_cash: float
     capacity: float
     forecast_date: str
     target: str
     model_name: str
     model_version: str | None
-    projected_cash: float
-    warning_threshold: float
-    high_threshold: float
-    critical_threshold: float
-    safety_buffer: float
+    projected_cash: float | None
+    warning_threshold: float | None
+    high_threshold: float | None
+    critical_threshold: float | None
+    safety_buffer: float | None
+    risk_evaluation_status: str
+    risk_evaluation_reason: str | None
     source: str
 
 
@@ -52,24 +59,30 @@ class ForecastService:
             mapping[atm_id],
         )
         inference_result = self.inference_service.predict(feature_frame)
-        risk = self.risk_service.assess(current_cash, inference_result.prediction, capacity)
+        risk = None if inference_result.target == "next_day_cash_flow" else self.risk_service.assess(
+            current_cash,
+            inference_result.prediction,
+            capacity,
+        )
 
         return ForecastResult(
             atm_id=atm_id,
-            predicted_demand=risk.predicted_demand,
+            predicted_demand=risk.predicted_demand if risk is not None else None,
             predicted_signed_net_cash_flow=round(float(inference_result.prediction), 2),
-            risk_level=risk.risk_level,
-            recommended_top_up=risk.recommended_top_up,
-            current_cash=risk.current_cash,
+            risk_level=risk.risk_level if risk is not None else None,
+            recommended_top_up=risk.recommended_top_up if risk is not None else None,
+            current_cash=risk.current_cash if risk is not None else round(max(float(current_cash), 0.0), 2),
             capacity=capacity,
             forecast_date=forecast_date,
             target=inference_result.target,
             model_name=inference_result.model_name,
             model_version=inference_result.model_version,
-            projected_cash=risk.projected_cash,
-            warning_threshold=risk.warning_threshold,
-            high_threshold=risk.high_threshold,
-            critical_threshold=risk.critical_threshold,
-            safety_buffer=risk.safety_buffer,
+            projected_cash=risk.projected_cash if risk is not None else None,
+            warning_threshold=risk.warning_threshold if risk is not None else None,
+            high_threshold=risk.high_threshold if risk is not None else None,
+            critical_threshold=risk.critical_threshold if risk is not None else None,
+            safety_buffer=risk.safety_buffer if risk is not None else None,
+            risk_evaluation_status=RISK_AVAILABLE if risk is not None else RISK_UNAVAILABLE,
+            risk_evaluation_reason=None if risk is not None else RISK_UNAVAILABLE_REASON,
             source="uploaded_dataset",
         )

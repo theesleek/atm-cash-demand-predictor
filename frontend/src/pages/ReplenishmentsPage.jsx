@@ -259,7 +259,7 @@ export default function ReplenishmentsPage() {
 
           {atmIntelligence.loading ? <LoadingState label="Loading recommendation and capacity" /> : atmIntelligence.error ? <p className="replenishment-form-note">Recommendation and capacity could not be loaded. The backend will validate the submitted amount.</p> : atmIntelligence.data && (
             <dl className="replenishment-guidance">
-              <div><dt>Recommended amount</dt><dd>{atmIntelligence.data.recommended_replenishment === null ? 'No persisted forecast recommendation' : numberLabel(atmIntelligence.data.recommended_replenishment)}</dd></div>
+              <div><dt>Recommended amount</dt><dd>{atmIntelligence.data.recommended_replenishment === null ? (atmIntelligence.data.risk_evaluation_status === 'UNAVAILABLE' ? 'Unavailable: verified demand required' : 'No persisted forecast recommendation') : numberLabel(atmIntelligence.data.recommended_replenishment)}</dd></div>
               <div><dt>ATM capacity</dt><dd>{numberLabel(atmIntelligence.data.capacity)}</dd></div>
             </dl>
           )}

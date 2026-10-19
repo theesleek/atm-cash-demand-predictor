@@ -142,16 +142,22 @@ def test_forecast_endpoint_uses_database_data(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["atm_id"] == "ATM-001"
-    assert payload["predicted_demand"] == 25000.0
-    assert payload["risk_level"] in {"NORMAL", "WARNING", "HIGH", "CRITICAL"}
+    assert payload["predicted_signed_net_cash_flow"] == 25000.0
+    assert payload["predicted_demand"] is None
+    assert payload["risk_level"] is None
+    assert payload["risk_evaluation_status"] == "UNAVAILABLE"
+    assert payload["risk_evaluation_reason"]
     assert payload["target"] == "next_day_cash_flow"
     assert payload["forecast_date"] == "2018-10-01"
     assert payload["model_name"] == "linear_regression+random_forest"
     assert payload["forecast_source"] == "uploaded_dataset"
     assert payload["inventory_source"] == "atm_record_fallback"
     assert payload["model_version"] == "phase4-production-50-50"
-    assert "projected_cash" in payload
-    assert "recommended_top_up" in payload
+    assert payload["projected_cash"] is None
+    assert payload["recommended_top_up"] is None
+    assert payload["warning_threshold"] is None
+    assert payload["high_threshold"] is None
+    assert payload["critical_threshold"] is None
 
     db = SessionLocal()
     try:
@@ -162,14 +168,11 @@ def test_forecast_endpoint_uses_database_data(monkeypatch) -> None:
             .first()
         )
         assert latest_forecast is not None
-        if payload["risk_level"] != "NORMAL":
-            persisted_alert = (
-                db.query(Alert)
-                .filter(Alert.atm_id == 1, Alert.forecast_id == latest_forecast.id)
-                .first()
-            )
-            assert persisted_alert is not None
-            assert persisted_alert.severity == payload["risk_level"]
+        assert latest_forecast.predicted_signed_net_cash_flow == 25000.0
+        assert latest_forecast.predicted_demand is None
+        assert latest_forecast.risk_level is None
+        assert latest_forecast.risk_evaluation_status == "UNAVAILABLE"
+        assert db.query(Alert).filter(Alert.atm_id == 1, Alert.forecast_id == latest_forecast.id).count() == 0
     finally:
         db.close()
 

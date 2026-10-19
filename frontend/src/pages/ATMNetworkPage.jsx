@@ -74,7 +74,7 @@ function ATMTable({ rows, sort, setSort }) {
               <td>{numberLabel(atm.current_cash)}</td>
               <td>{numberLabel(atm.predicted_demand)}</td>
               <td>{numberLabel(atm.projected_cash)}</td>
-              <td>{atm.risk_level ? <RiskBadge risk={atm.risk_level} /> : <span className="atm-unavailable">Not assessed</span>}</td>
+              <td>{atm.risk_level ? <RiskBadge risk={atm.risk_level} /> : <span className="atm-unavailable">{atm.risk_evaluation_status === 'UNAVAILABLE' ? 'Unavailable' : 'Not assessed'}</span>}</td>
               <td>
                 {atm.last_replenishment_at ? (
                   <span className="atm-replenishment-cell">
@@ -168,7 +168,7 @@ export default function ATMNetworkPage() {
         ) : (
           <EmptyState title="No matching ATMs" description="Adjust the search or filters to see other network records." />
         )}
-      <p className="atm-network-note">Forecast values appear only when a forecast has already been recorded for an ATM.</p>
+      <p className="atm-network-note">Signed net cash flow forecasts are shown separately from risk. Demand-based risk requires verified withdrawal-demand data.</p>
     </main>
   );
 }
@@ -213,8 +213,8 @@ export function ATMDetailPage() {
   const historical = record?.historical_demand || [];
   const chartData = [
     ...historical.map((point) => ({ date: point.date, historicalDemand: point.demand })),
-    ...(record?.predicted_demand !== null && record?.predicted_demand !== undefined && record?.forecast_date
-      ? [{ date: record.forecast_date, predictedDemand: record.predicted_demand }]
+    ...(record?.predicted_signed_net_cash_flow !== null && record?.predicted_signed_net_cash_flow !== undefined && record?.forecast_date
+      ? [{ date: record.forecast_date, predictedSignedNetCashFlow: record.predicted_signed_net_cash_flow }]
       : []),
   ];
   const activity = [
@@ -256,6 +256,7 @@ export function ATMDetailPage() {
                 <article><span>Operational status</span><StatusBadge status={record.status} /></article>
                 <article><span>Current cash</span><strong>{numberLabel(record.current_cash)}</strong></article>
                 <article><span>Cash capacity</span><strong>{numberLabel(record.capacity)}</strong></article>
+                <article><span>Signed net cash flow</span><strong>{numberLabel(record.predicted_signed_net_cash_flow)}</strong></article>
                 <article><span>Risk demand basis</span><strong>{numberLabel(record.predicted_demand)}</strong></article>
                 <article><span>Projected cash</span><strong>{numberLabel(record.projected_cash)}</strong></article>
                 <article><span>Risk</span>{record.risk_level ? <RiskBadge risk={record.risk_level} /> : <span className="atm-unavailable">Not assessed</span>}</article>
@@ -266,7 +267,7 @@ export function ATMDetailPage() {
                 <Card title="Forecast: Signed Net Cash Flow vs Risk Basis">
                   {historical.length ? (
                     <>
-                      <p className="dashboard-chart-caption">Signed net cash flow uses the source dataset's unspecified units; the persisted value is the nonnegative risk basis{record.forecast_date ? ` · forecast date ${dateLabel(record.forecast_date)}` : ''}</p>
+                      <p className="dashboard-chart-caption">Signed net cash flow uses the source dataset's unspecified units; it is not a verified withdrawal-demand basis{record.forecast_date ? ` · forecast date ${dateLabel(record.forecast_date)}` : ''}</p>
                       <div className="atm-detail-chart">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={chartData} margin={{ top: 12, right: 14, left: 0, bottom: 4 }}>
@@ -280,17 +281,20 @@ export function ATMDetailPage() {
                             />
                             <Legend wrapperStyle={{ color: '#cbd3d7', fontSize: 12 }} />
                             <Line type="monotone" dataKey="historicalDemand" name="Historical signed net cash flow" stroke="#82a9bb" strokeWidth={2} dot={false} connectNulls />
-                            <Line type="monotone" dataKey="predictedDemand" name="Risk demand basis" stroke="#55b7e8" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 4 }} connectNulls />
+                            <Line type="monotone" dataKey="predictedSignedNetCashFlow" name="Predicted signed net cash flow" stroke="#55b7e8" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 4 }} connectNulls />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
                     </>
                   ) : <EmptyState title="Historical signed net cash flow unavailable" description="No mapped historical observations are available for this ATM." />}
-                  {record.predicted_demand === null && <p className="atm-detail-note">No persisted forecast is available for this ATM.</p>}
+                  {record.risk_evaluation_status === 'UNAVAILABLE' && <p className="atm-detail-note">{record.risk_evaluation_reason || 'Verified withdrawal-demand data is required for risk evaluation.'}</p>}
+                  {record.predicted_signed_net_cash_flow === null && <p className="atm-detail-note">No persisted forecast is available for this ATM.</p>}
                 </Card>
 
                 <Card title="Risk Explanation">
-                  {record.risk_level ? (
+                  {record.risk_evaluation_status === 'UNAVAILABLE' ? (
+                    <EmptyState title="Risk evaluation unavailable" description={record.risk_evaluation_reason || 'Verified withdrawal-demand data is required for demand-based risk evaluation.'} />
+                  ) : record.risk_level ? (
                     <div className="atm-risk-explanation">
                       <RiskBadge risk={record.risk_level} />
                       <p>{record.risk_explanation}</p>

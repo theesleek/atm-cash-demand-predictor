@@ -130,9 +130,12 @@ def test_forecast_generation_for_valid_atm(synthetic_processed_history) -> None:
     service = ForecastService(ProductionInferenceService(ModelBundle(models, config)), history_frame=history[history["atm_id"] == 74].reset_index(drop=True))
     result = service.generate_forecast("ATM-001", current_cash=32000.0, daily_demand=28000.0, capacity=50000.0)
     assert result.atm_id == "ATM-001"
-    assert result.predicted_demand == 25000.0
-    assert result.risk_level in {"NORMAL", "WARNING", "HIGH", "CRITICAL"}
-    assert result.recommended_top_up >= 0
+    assert result.predicted_signed_net_cash_flow == 25000.0
+    assert result.predicted_demand is None
+    assert result.risk_level is None
+    assert result.recommended_top_up is None
+    assert result.risk_evaluation_status == "UNAVAILABLE"
+    assert result.warning_threshold is None
     assert result.target == "next_day_cash_flow"
     assert result.forecast_date == "2018-10-01"
     assert result.source == "uploaded_dataset"
@@ -262,7 +265,10 @@ def test_forecast_service_uses_configured_artifact_ensemble(synthetic_processed_
 
     result = service.generate_forecast("ATM-001", current_cash=32000.0, daily_demand=28000.0, capacity=50000.0)
 
-    assert result.predicted_demand == 25000.0
+    assert result.predicted_signed_net_cash_flow == 25000.0
+    assert result.predicted_demand is None
+    assert result.risk_level is None
+    assert result.risk_evaluation_status == "UNAVAILABLE"
     assert result.target == "next_day_cash_flow"
     assert result.forecast_date == "2018-10-01"
     assert result.model_name == "linear_regression+random_forest"
@@ -330,10 +336,13 @@ def test_replenishment_targets_demand_plus_buffer() -> None:
 def test_replenishment_respects_capacity_and_never_goes_negative() -> None:
     service = CashRiskService(safety_buffer=0.25)
     at_capacity = service.assess(current_cash=900.0, predicted_demand=1000.0, capacity=1000.0)
-    negative_prediction = service.assess(current_cash=0.0, predicted_demand=-100.0, capacity=1000.0)
 
     assert 0 <= at_capacity.recommended_top_up <= 1000.0
-    assert negative_prediction.recommended_top_up == 0.0
+
+
+def test_negative_signed_flow_is_rejected_by_demand_risk_service() -> None:
+    with pytest.raises(ValueError, match="nonnegative verified withdrawal-demand"):
+        CashRiskService().assess(current_cash=32000.0, predicted_demand=-3199.96, capacity=50000.0)
 
 
 def test_invalid_prototype_mapping_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

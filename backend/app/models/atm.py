@@ -76,9 +76,12 @@ class Forecast(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     atm_id: Mapped[int] = mapped_column(ForeignKey("atms.id"), nullable=False, index=True)
     forecast_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow, index=True)
-    predicted_demand: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="normal", index=True)
-    recommended_top_up: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    predicted_demand: Mapped[float | None] = mapped_column(Float, nullable=True)
+    predicted_signed_net_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    risk_evaluation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE", server_default="AVAILABLE")
+    risk_evaluation_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recommended_top_up: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_version: Mapped[str] = mapped_column(String(64), nullable=False, default="phase2-synthetic", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -91,7 +94,10 @@ class Forecast(Base):
     atm: Mapped[ATM] = relationship(back_populates="forecasts")
     replenishments: Mapped[list["Replenishment"]] = relationship(back_populates="forecast")
     __table_args__ = (
-        CheckConstraint("predicted_demand >= 0 AND recommended_top_up >= 0", name="ck_forecasts_nonnegative_values"),
+        CheckConstraint(
+            "(predicted_demand IS NULL OR predicted_demand >= 0) AND (recommended_top_up IS NULL OR recommended_top_up >= 0)",
+            name="ck_forecasts_nonnegative_values",
+        ),
         CheckConstraint("risk_level IN ('NORMAL', 'WARNING', 'HIGH', 'CRITICAL', 'normal', 'warning', 'high', 'critical')", name="ck_forecasts_risk_level"),
         Index("ix_forecasts_atm_date", "atm_id", "forecast_date"),
     )

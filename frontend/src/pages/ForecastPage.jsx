@@ -108,10 +108,12 @@ export default function ForecastPage() {
       date: point.date,
       historicalCashFlow: Number(point.demand),
     }));
-    points.push({
-      date: forecast.data.forecast_date,
-      predictedSignedNetCashFlow: Number(forecast.data.predicted_signed_net_cash_flow ?? forecast.data.predicted_demand),
-    });
+    if (forecast.data.predicted_signed_net_cash_flow !== null && forecast.data.predicted_signed_net_cash_flow !== undefined) {
+      points.push({
+        date: forecast.data.forecast_date,
+        predictedSignedNetCashFlow: Number(forecast.data.predicted_signed_net_cash_flow),
+      });
+    }
     return points.sort((left, right) => String(left.date).localeCompare(String(right.date)));
   }, [forecast.data, history.data]);
 
@@ -144,11 +146,12 @@ export default function ForecastPage() {
           <>
             <section className="forecast-summary" aria-label="Forecast summary">
               <article><span><CalendarDays size={15} /> Forecast date</span><strong>{dateLabel(forecast.data.forecast_date)}</strong></article>
-              <article><span><Gauge size={15} /> Signed net cash flow</span><strong>{numberLabel(forecast.data.predicted_signed_net_cash_flow ?? forecast.data.predicted_demand)}</strong></article>
+              <article><span><Gauge size={15} /> Signed net cash flow</span><strong>{numberLabel(forecast.data.predicted_signed_net_cash_flow)}</strong></article>
               <article><span><Landmark size={15} /> ATM</span><strong>{forecast.data.atm_id}</strong></article>
               <article><span><Cpu size={15} /> Model</span><strong>50/50 Linear Regression + Random Forest</strong></article>
               <article><span><Activity size={15} /> Model version</span><strong>{forecast.data.model_version || '—'}</strong></article>
               <article><span><Database size={15} /> Data source</span><strong>{forecast.data.forecast_source || '—'}</strong></article>
+              <article><span><Gauge size={15} /> Risk evaluation</span><strong>{forecast.data.risk_evaluation_status === 'UNAVAILABLE' ? 'Unavailable' : 'Available'}</strong></article>
             </section>
 
             <Card title="Historical vs Predicted Signed Net Cash Flow" className="forecast-chart-card">
@@ -181,7 +184,8 @@ export default function ForecastPage() {
             <section className="forecast-explanation-grid">
               <Card title="How to read this forecast" className="forecast-explanation">
                 <p>The forecast estimates next-day signed net cash flow using historical ATM activity and derived time-based features.</p>
-                <p>The model combines Linear Regression and Random Forest predictions in a 50/50 ensemble. Risk calculations use a nonnegative basis derived from the forecast; this output is decision support, not verified withdrawal demand or a replenishment approval.</p>
+                <p>The model combines Linear Regression and Random Forest predictions in a 50/50 ensemble. Signed net cash flow is not verified withdrawal demand, so demand-based risk thresholds and replenishment recommendations are unavailable until an approved demand target is configured.</p>
+                {forecast.data.risk_evaluation_status === 'UNAVAILABLE' && <p className="forecast-chart-note">{forecast.data.risk_evaluation_reason || 'Verified withdrawal-demand data is required for demand-based risk evaluation.'}</p>}
               </Card>
               <Card title="Measured model metrics" className="forecast-metrics-card">
                 <div className="forecast-metrics">

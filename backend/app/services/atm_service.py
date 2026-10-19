@@ -31,6 +31,16 @@ class ATMService:
         self.ingestion_service = IngestionService(session)
 
     @staticmethod
+    def _assess_persisted_forecast(forecast, current_cash: float, capacity: float):
+        if (
+            forecast is None
+            or forecast.risk_evaluation_status != "AVAILABLE"
+            or forecast.predicted_demand is None
+        ):
+            return None
+        return CashRiskService().assess(current_cash, float(forecast.predicted_demand), capacity)
+
+    @staticmethod
     def _serialize(record: ATM) -> dict[str, object]:
         return {
             "id": record.id,
@@ -123,6 +133,11 @@ class ATMService:
             forecast = forecasts.get(atm.id)
             inventory = self.inventory_repository.latest_for_atm(atm.id)
             current_cash = float(inventory.cash_on_hand if inventory is not None else atm.current_cash)
+            risk = self._assess_persisted_forecast(
+                forecast,
+                current_cash,
+                float(inventory.capacity if inventory is not None and inventory.capacity > 0 else atm.capacity),
+            )
             replenishment = latest_replenishments.get(atm.id)
             result.append(
                 {
@@ -132,10 +147,13 @@ class ATMService:
                     "region": atm.region,
                     "location": f"{atm.branch_id}, {atm.region}",
                     "current_cash": current_cash,
-                    "predicted_demand": float(forecast.predicted_demand) if forecast is not None else None,
+                    "predicted_demand": risk.predicted_demand if risk is not None else None,
+                    "predicted_signed_net_cash_flow": float(forecast.predicted_signed_net_cash_flow) if forecast and forecast.predicted_signed_net_cash_flow is not None else None,
                     "forecast_date": forecast.forecast_date.isoformat() if forecast and forecast.forecast_date else None,
-                    "projected_cash": current_cash - float(forecast.predicted_demand) if forecast is not None else None,
-                    "risk_level": forecast.risk_level.upper() if forecast is not None else None,
+                    "projected_cash": risk.projected_cash if risk is not None else None,
+                    "risk_level": forecast.risk_level.upper() if forecast and forecast.risk_evaluation_status == "AVAILABLE" and forecast.risk_level else None,
+                    "risk_evaluation_status": forecast.risk_evaluation_status if forecast is not None else "NOT_ASSESSED",
+                    "risk_evaluation_reason": forecast.risk_evaluation_reason if forecast is not None else None,
                     "last_replenishment_id": replenishment.id if replenishment is not None else None,
                     "last_replenishment_at": replenishment.created_at.isoformat() if replenishment is not None else None,
                     "last_replenishment_status": replenishment.status if replenishment is not None else None,
@@ -164,11 +182,7 @@ class ATMService:
         current_cash = float(inventory.cash_on_hand if inventory is not None else atm.current_cash)
         capacity = float(inventory.capacity if inventory is not None and inventory.capacity > 0 else atm.capacity)
         forecast = self.forecast_repository.latest_for_atms([atm.id]).get(atm.id)
-        risk = (
-            CashRiskService().assess(current_cash, float(forecast.predicted_demand), capacity)
-            if forecast is not None
-            else None
-        )
+        risk = self._assess_persisted_forecast(forecast, current_cash, capacity)
 
         historical_demand: list[dict[str, object]] = []
         uploaded_history = self.ingestion_service.uploaded_daily_history(atm)
@@ -216,6 +230,7 @@ class ATMService:
             "current_cash": risk.current_cash if risk is not None else current_cash,
             "capacity": capacity,
             "predicted_demand": risk.predicted_demand if risk is not None else None,
+            "predicted_signed_net_cash_flow": forecast.predicted_signed_net_cash_flow if forecast is not None else None,
             "projected_cash": risk.projected_cash if risk is not None else None,
             "risk_level": risk.risk_level if risk is not None else None,
             "risk_explanation": risk_explanation,
@@ -223,6 +238,8 @@ class ATMService:
             "high_threshold": risk.high_threshold if risk is not None else None,
             "critical_threshold": risk.critical_threshold if risk is not None else None,
             "recommended_replenishment": risk.recommended_top_up if risk is not None else None,
+            "risk_evaluation_status": forecast.risk_evaluation_status if forecast is not None else "NOT_ASSESSED",
+            "risk_evaluation_reason": forecast.risk_evaluation_reason if forecast is not None else None,
             "forecast_date": forecast.forecast_date.isoformat() if forecast and forecast.forecast_date else None,
             "forecast_model_version": forecast.model_version if forecast is not None else None,
             "historical_demand": historical_demand,
@@ -247,18 +264,21 @@ class ATMService:
         inventory = self.inventory_repository.latest_for_atm(atm.id)
         current_cash = float(inventory.cash_on_hand if inventory is not None else atm.current_cash)
         capacity = float(inventory.capacity if inventory is not None and inventory.capacity > 0 else atm.capacity)
-        assessment = CashRiskService().assess(current_cash, float(forecast.predicted_demand), capacity)
+        assessment = self._assess_persisted_forecast(forecast, current_cash, capacity)
         return {
             "forecast_id": forecast.id,
             "atm_id": atm.atm_code,
             "forecast_date": forecast.forecast_date.isoformat() if forecast.forecast_date else None,
-            "predicted_demand": float(forecast.predicted_demand),
-            "projected_cash": assessment.projected_cash,
-            "risk_level": forecast.risk_level.upper(),
-            "warning_threshold": assessment.warning_threshold,
-            "high_threshold": assessment.high_threshold,
-            "critical_threshold": assessment.critical_threshold,
-            "recommended_replenishment": float(forecast.recommended_top_up),
+            "predicted_demand": assessment.predicted_demand if assessment is not None else None,
+            "predicted_signed_net_cash_flow": float(forecast.predicted_signed_net_cash_flow) if forecast.predicted_signed_net_cash_flow is not None else None,
+            "projected_cash": assessment.projected_cash if assessment is not None else None,
+            "risk_level": forecast.risk_level.upper() if assessment is not None and forecast.risk_level else None,
+            "risk_evaluation_status": forecast.risk_evaluation_status,
+            "risk_evaluation_reason": forecast.risk_evaluation_reason,
+            "warning_threshold": assessment.warning_threshold if assessment is not None else None,
+            "high_threshold": assessment.high_threshold if assessment is not None else None,
+            "critical_threshold": assessment.critical_threshold if assessment is not None else None,
+            "recommended_replenishment": float(forecast.recommended_top_up) if assessment is not None and forecast.recommended_top_up is not None else None,
             "model_version": forecast.model_version,
         }
 
@@ -288,14 +308,18 @@ class ATMService:
             recommended_top_up=forecast.recommended_top_up,
             forecast_date=datetime.fromisoformat(forecast.forecast_date),
             model_version=forecast.model_version or "unknown",
+            predicted_signed_net_cash_flow=forecast.predicted_signed_net_cash_flow,
+            risk_evaluation_status=forecast.risk_evaluation_status,
+            risk_evaluation_reason=forecast.risk_evaluation_reason,
         )
-        self.alert_service.create_or_update_risk_alert(
-            atm_id=record.id,
-            atm_code=record.atm_code,
-            forecast_id=persisted_forecast.id,
-            severity=forecast.risk_level,
-            projected_cash=forecast.projected_cash,
-        )
+        if forecast.risk_level is not None and forecast.projected_cash is not None:
+            self.alert_service.create_or_update_risk_alert(
+                atm_id=record.id,
+                atm_code=record.atm_code,
+                forecast_id=persisted_forecast.id,
+                severity=forecast.risk_level,
+                projected_cash=forecast.projected_cash,
+            )
         return {
             "atm_id": forecast.atm_id,
             "forecast_date": forecast.forecast_date,
@@ -304,6 +328,8 @@ class ATMService:
             "forecast_label": "signed_net_cash_flow",
             "risk_demand_basis": forecast.predicted_demand,
             "risk_level": forecast.risk_level,
+            "risk_evaluation_status": forecast.risk_evaluation_status,
+            "risk_evaluation_reason": forecast.risk_evaluation_reason,
             "recommended_top_up": forecast.recommended_top_up,
             "current_cash": forecast.current_cash,
             "capacity": forecast.capacity,
@@ -347,9 +373,14 @@ class ATMService:
             if self.inventory_repository.latest_for_atm(record.id) is not None else float(record.current_cash)
             for record in records
         )
-        forecasted_demand = sum(float(forecast.predicted_demand) for forecast in forecasts.values())
-        at_risk_atms = sum(1 for forecast in forecasts.values() if forecast.risk_level.upper() != "NORMAL")
-        critical_atms = sum(1 for forecast in forecasts.values() if forecast.risk_level.upper() == "CRITICAL")
+        assessed_forecasts = [
+            forecast
+            for forecast in forecasts.values()
+            if forecast.risk_evaluation_status == "AVAILABLE" and forecast.predicted_demand is not None and forecast.risk_level
+        ]
+        forecasted_demand = sum(float(forecast.predicted_demand) for forecast in assessed_forecasts)
+        at_risk_atms = sum(1 for forecast in assessed_forecasts if forecast.risk_level.upper() != "NORMAL")
+        critical_atms = sum(1 for forecast in assessed_forecasts if forecast.risk_level.upper() == "CRITICAL")
 
         return {
             "atms_monitored": len(records),

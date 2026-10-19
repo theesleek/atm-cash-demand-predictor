@@ -34,17 +34,23 @@ class ForecastRepository:
     def create(
         self,
         atm_id: int,
-        predicted_demand: float,
-        risk_level: str,
-        recommended_top_up: float,
+        predicted_demand: float | None,
+        risk_level: str | None,
+        recommended_top_up: float | None,
         forecast_date: datetime,
         model_version: str,
+        predicted_signed_net_cash_flow: float | None = None,
+        risk_evaluation_status: str = "AVAILABLE",
+        risk_evaluation_reason: str | None = None,
     ) -> Forecast:
         item = Forecast(
             atm_id=atm_id,
             forecast_date=forecast_date,
             predicted_demand=predicted_demand,
+            predicted_signed_net_cash_flow=predicted_signed_net_cash_flow,
             risk_level=risk_level,
+            risk_evaluation_status=risk_evaluation_status,
+            risk_evaluation_reason=risk_evaluation_reason,
             recommended_top_up=recommended_top_up,
             model_version=model_version,
         )

@@ -176,7 +176,7 @@ function CashForecast({ atms, forecast }) {
   const atm = atms.data[0];
   const series = [
     { date: dateLabel(atm.updated_at), recordedBaseline: Number(atm.daily_demand) },
-    { date: dateLabel(forecast.data.forecast_date), predictedSignedNetCashFlow: Number(forecast.data.predicted_signed_net_cash_flow ?? forecast.data.predicted_demand) },
+    { date: dateLabel(forecast.data.forecast_date), predictedSignedNetCashFlow: forecast.data.predicted_signed_net_cash_flow === null || forecast.data.predicted_signed_net_cash_flow === undefined ? null : Number(forecast.data.predicted_signed_net_cash_flow) },
   ];
   return (
     <>
@@ -198,6 +198,7 @@ function CashForecast({ atms, forecast }) {
         </ResponsiveContainer>
       </div>
       <p className="dashboard-data-note">The baseline is the ATM’s stored operational figure. Forecasts use signed net cash flow in the source dataset’s unspecified units, not verified withdrawal demand.</p>
+      {forecast.data.risk_evaluation_status === 'UNAVAILABLE' && <p className="dashboard-data-note">Demand-based risk and replenishment recommendations require verified withdrawal-demand data.</p>}
     </>
   );
 }
@@ -335,7 +336,7 @@ function DashboardPage() {
                 <li key={risk}><RiskBadge risk={risk} /><strong>{count}</strong></li>
               ))}
             </ul>
-            <p className="dashboard-data-note">Risk levels are derived from each ATM’s highest active alert; ATMs without one are shown as NORMAL.</p>
+            <p className="dashboard-data-note">Risk levels are derived from active alerts. ATMs without one are shown as NORMAL for this alert summary; that does not mean demand-based risk has been assessed. Verified withdrawal-demand data is required.</p>
           </ResourceState>
         </Card>
 

@@ -3,8 +3,11 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal, create_db_and_tables, seed_security_data
+from app.db.base import Base
+from app.db.session import seed_security_data
 from app.models.auth import AuditLog, Role, User
 from app.models.model_registry import ModelRegistry
 from app.services.model_lifecycle_service import ModelLifecycleError, ModelLifecycleService
@@ -12,8 +15,13 @@ from app.services.model_lifecycle_service import ModelLifecycleError, ModelLifec
 
 @pytest.fixture()
 def lifecycle_environment(tmp_path):
-    create_db_and_tables()
-    session = SessionLocal()
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'model_lifecycle.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    session = Session(engine)
+    seed_security_data(session)
     target = f"test_target_{uuid.uuid4().hex}"
     version_a = f"test-{uuid.uuid4().hex}"
     version_b = f"test-{uuid.uuid4().hex}"
@@ -23,12 +31,12 @@ def lifecycle_environment(tmp_path):
     session.commit()
     artifact = tmp_path / "model.joblib"
     artifact.write_bytes(b"valid test artifact")
-    yield session, actor.id, target, version_a, version_b, {"model": artifact}
-    session.query(AuditLog).filter(AuditLog.entity_type == "MODEL", AuditLog.entity_id.in_([version_a, version_b])).delete(synchronize_session=False)
-    session.query(ModelRegistry).filter(ModelRegistry.target == target).delete(synchronize_session=False)
-    session.query(User).filter(User.id == actor.id).delete(synchronize_session=False)
-    session.commit()
-    session.close()
+    try:
+        yield session, actor.id, target, version_a, version_b, {"model": artifact}
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
 
 
 def _register(service, target, version, artifacts, actor_id):

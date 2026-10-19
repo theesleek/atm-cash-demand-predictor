@@ -41,7 +41,9 @@ class CashRiskService:
         if capacity < 0:
             raise ValueError("ATM capacity cannot be negative")
 
-        demand = max(float(predicted_demand), 0.0)
+        demand = float(predicted_demand)
+        if demand < 0:
+            raise ValueError("Risk assessment requires a nonnegative verified withdrawal-demand value")
         cash = max(float(current_cash), 0.0)
         projected_cash = max(cash - demand, 0.0)
         warning_amount = demand * self.warning_threshold
