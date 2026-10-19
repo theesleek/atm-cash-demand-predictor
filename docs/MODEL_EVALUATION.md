@@ -51,6 +51,16 @@ The separate onboarding path accepts operation-level `withdrawal`, `cash_withdra
 
 The upload validator currently requires nonnegative `amount` values and stores the amount without applying an operation-type sign mapping. This is suitable only as an ingestion contract for separately governed records; it is not a verified historical cash-flow derivation and must not be used to infer withdrawal demand.
 
+The application CSV upload intentionally accepts only the operational schema
+`atm_id`, `datetime`, `operation_type`, and nonnegative `amount`. It explicitly
+rejects raw Kaggle operation files containing `operation_value`, two-column
+prediction inputs containing only `datetime` and `atm_id`, unsupported extra
+columns, empty files, and malformed CSV. Raw Kaggle training files must use the
+separate signed-flow reconstruction path in
+`backend/app/data/tinkoff_history.py`; duplicate raw transactions are retained
+when calculating the daily `operation_value` sum and are not converted into
+operational withdrawal records.
+
 ### Target decision
 
 No separate nonnegative demand target was implemented. A reliable withdrawal-demand field cannot be derived from the available processed data without inventing a sign convention or converting net flow by clipping, which would be scientifically invalid. The platform should remain characterized as a net-cash-flow forecasting prototype until an approved source snapshot supplies at least withdrawal amount/count, deposit amount/count, ATM cash balance, capacity, replenishment events/amounts, service availability, and cash-out/shortage outcomes with stable ATM identity and units.

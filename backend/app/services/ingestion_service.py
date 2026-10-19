@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import math
+from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -18,6 +19,8 @@ from app.services.audit_service import AuditService
 
 
 REQUIRED_COLUMNS = ("atm_id", "datetime", "operation_type", "amount")
+RAW_KAGGLE_COLUMNS = frozenset({"datetime", "atm_id", "operation_value"})
+PREDICTION_INPUT_COLUMNS = frozenset({"datetime", "atm_id"})
 SUPPORTED_OPERATION_TYPES = frozenset({"withdrawal", "cash_withdrawal", "deposit", "cash_deposit"})
 MAX_REJECTED_ROWS_IN_REPORT = 500
 
@@ -83,14 +86,44 @@ class IngestionService:
 
         try:
             text = content.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
+            reader = csv.DictReader(io.StringIO(text), strict=True)
             fieldnames = [field.strip() for field in (reader.fieldnames or []) if field]
+            reader.fieldnames = fieldnames
         except UnicodeDecodeError:
+            fieldnames = []
+            reader = None
+        except csv.Error:
             fieldnames = []
             reader = None
 
         missing_columns = [column for column in REQUIRED_COLUMNS if column not in fieldnames]
-        if reader is None or missing_columns:
+        duplicate_columns = sorted({field for field, count in Counter(fieldnames).items() if count > 1})
+        unexpected_columns = sorted(set(fieldnames) - set(REQUIRED_COLUMNS))
+        schema_errors: list[str] = []
+        schema_message = None
+        if reader is None:
+            schema_errors = ["INVALID_ENCODING_OR_CSV"]
+            schema_message = "The file is not valid UTF-8 CSV data."
+        elif not fieldnames:
+            schema_errors = ["EMPTY_FILE"]
+            schema_message = "The CSV file is empty and has no header row."
+        elif duplicate_columns:
+            schema_errors = ["DUPLICATE_HEADER"]
+            schema_message = f"Duplicate CSV headers are not allowed: {duplicate_columns}."
+        elif RAW_KAGGLE_COLUMNS.issubset(fieldnames):
+            schema_errors = ["UNSUPPORTED_RAW_KAGGLE_SCHEMA"]
+            schema_message = "Raw Kaggle operation files require the separate signed-flow reconstruction path; they cannot be ingested as operational history."
+        elif set(fieldnames) == PREDICTION_INPUT_COLUMNS:
+            schema_errors = ["PREDICTION_INPUT_NOT_SUPPORTED"]
+            schema_message = "A datetime/atm_id prediction file cannot be uploaded because this application requires historical observations for forecasting."
+        elif missing_columns:
+            schema_errors = ["MISSING_REQUIRED_FIELD"]
+            schema_message = "The operational upload requires atm_id, datetime, operation_type, and amount."
+        elif unexpected_columns:
+            schema_errors = ["UNSUPPORTED_COLUMNS"]
+            schema_message = f"Unsupported CSV columns: {unexpected_columns}."
+
+        if schema_errors:
             report = {
                 "rows_received": 0,
                 "valid_rows": 0,
@@ -99,8 +132,9 @@ class IngestionService:
                 "missing_timestamps": 0,
                 "unknown_atm_ids": 0,
                 "date_range": None,
-                "rejected_rows": [{"row": 1, "reasons": ["MISSING_REQUIRED_FIELD"], "missing_columns": missing_columns or REQUIRED_COLUMNS}],
-                "schema_errors": ["MISSING_REQUIRED_FIELD"],
+                "rejected_rows": [{"row": 1, "reasons": schema_errors, "missing_columns": missing_columns, "unexpected_columns": unexpected_columns}],
+                "schema_errors": schema_errors,
+                "schema_message": schema_message,
             }
             version.status = "REJECTED"
             version.rows_rejected = 1
@@ -121,54 +155,90 @@ class IngestionService:
         missing_timestamps = 0
         unknown_atm_ids = 0
         dates: list[date] = []
+        row_schema_errors: set[str] = set()
 
-        for row_number, raw_row in enumerate(reader, start=2):
-            rows_received += 1
-            row = {str(key).strip(): (value or "").strip() for key, value in raw_row.items() if key is not None}
-            reasons: list[str] = []
-            atm_code = row.get("atm_id", "")
-            if not atm_code or not row.get("datetime") or not row.get("operation_type") or not row.get("amount"):
-                reasons.append("MISSING_REQUIRED_FIELD")
-            atm = atms.get(atm_code)
-            if atm is None:
-                unknown_atm_ids += 1
-                reasons.append("UNKNOWN_ATM")
-            try:
-                observed_at = _parse_datetime(row.get("datetime", ""))
-            except (TypeError, ValueError):
-                observed_at = None
-                missing_timestamps += 1
-                reasons.append("INVALID_DATETIME")
-            operation_type = row.get("operation_type", "").lower().replace(" ", "_")
-            if operation_type not in SUPPORTED_OPERATION_TYPES:
-                reasons.append("INVALID_OPERATION_TYPE")
-            try:
-                amount = float(row.get("amount", ""))
-                if not math.isfinite(amount) or amount < 0:
-                    raise ValueError
-            except (TypeError, ValueError):
-                amount = 0.0
-                reasons.append("INVALID_AMOUNT")
+        try:
+            for row_number, raw_row in enumerate(reader, start=2):
+                rows_received += 1
+                missing_values = [key for key, value in raw_row.items() if key is not None and value is None]
+                extra_values = raw_row.get(None) or []
+                if missing_values or extra_values:
+                    row_schema_errors.add("INVALID_ROW_WIDTH")
+                    if len(rejected) < MAX_REJECTED_ROWS_IN_REPORT:
+                        rejected.append(
+                            {
+                                "row": row_number,
+                                "reasons": ["INVALID_ROW_WIDTH"],
+                                "values": {str(key).strip(): value for key, value in raw_row.items() if key is not None},
+                                "missing_columns": missing_values,
+                                "extra_values": extra_values,
+                            }
+                        )
+                    continue
+                row = {str(key).strip(): (value or "").strip() for key, value in raw_row.items() if key is not None}
+                reasons: list[str] = []
+                atm_code = row.get("atm_id", "")
+                if not atm_code or not row.get("datetime") or not row.get("operation_type") or not row.get("amount"):
+                    reasons.append("MISSING_REQUIRED_FIELD")
+                atm = atms.get(atm_code)
+                if atm is None:
+                    unknown_atm_ids += 1
+                    reasons.append("UNKNOWN_ATM")
+                try:
+                    observed_at = _parse_datetime(row.get("datetime", ""))
+                except (TypeError, ValueError):
+                    observed_at = None
+                    missing_timestamps += 1
+                    reasons.append("INVALID_DATETIME")
+                operation_type = row.get("operation_type", "").lower().replace(" ", "_")
+                if operation_type not in SUPPORTED_OPERATION_TYPES:
+                    reasons.append("INVALID_OPERATION_TYPE")
+                try:
+                    amount = float(row.get("amount", ""))
+                    if not math.isfinite(amount) or amount < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    amount = 0.0
+                    reasons.append("INVALID_AMOUNT")
 
-            fingerprint = _fingerprint(atm.id, observed_at, operation_type, amount) if atm and observed_at else None
-            if fingerprint and (fingerprint in seen or fingerprint in existing_fingerprints):
-                duplicate_rows += 1
-                reasons.append("DUPLICATE_RECORD")
-            if reasons:
-                if len(rejected) < MAX_REJECTED_ROWS_IN_REPORT:
-                    rejected.append({"row": row_number, "reasons": sorted(set(reasons)), "values": row})
-                continue
-            seen.add(fingerprint)
-            dates.append(observed_at.date())
-            accepted.append(
-                {
-                    "atm_code": atm_code,
-                    "datetime": observed_at.astimezone(timezone.utc).isoformat(),
-                    "operation_type": operation_type,
-                    "amount": amount,
-                    "record_fingerprint": fingerprint,
-                }
-            )
+                fingerprint = _fingerprint(atm.id, observed_at, operation_type, amount) if atm and observed_at else None
+                if fingerprint and (fingerprint in seen or fingerprint in existing_fingerprints):
+                    duplicate_rows += 1
+                    reasons.append("DUPLICATE_RECORD")
+                if reasons:
+                    if len(rejected) < MAX_REJECTED_ROWS_IN_REPORT:
+                        rejected.append({"row": row_number, "reasons": sorted(set(reasons)), "values": row})
+                    continue
+                seen.add(fingerprint)
+                dates.append(observed_at.date())
+                accepted.append(
+                    {
+                        "atm_code": atm_code,
+                        "datetime": observed_at.astimezone(timezone.utc).isoformat(),
+                        "operation_type": operation_type,
+                        "amount": amount,
+                        "record_fingerprint": fingerprint,
+                    }
+                )
+        except csv.Error as exc:
+            report = {
+                "rows_received": rows_received,
+                "valid_rows": 0,
+                "invalid_rows": rows_received + 1,
+                "duplicate_rows": duplicate_rows,
+                "missing_timestamps": missing_timestamps,
+                "unknown_atm_ids": unknown_atm_ids,
+                "date_range": None,
+                "rejected_rows": rejected + [{"row": rows_received + 2, "reasons": ["MALFORMED_CSV"]}],
+                "schema_errors": ["MALFORMED_CSV"],
+                "schema_message": f"The CSV structure is malformed: {exc}",
+            }
+            version.status = "REJECTED"
+            version.rows_received = rows_received
+            version.rows_rejected = rows_received + 1
+            version.validation_report = report
+            self.session.commit()
+            return _serialize(version)
 
         report = {
             "rows_received": rows_received,
@@ -179,7 +249,7 @@ class IngestionService:
             "unknown_atm_ids": unknown_atm_ids,
             "date_range": {"from": min(dates).isoformat(), "to": max(dates).isoformat()} if dates else None,
             "rejected_rows": rejected,
-            "schema_errors": [],
+            "schema_errors": sorted(row_schema_errors),
         }
         version.status = "VALIDATED" if accepted else "REJECTED"
         version.rows_received = rows_received

@@ -1,0 +1,7 @@
+atm_id,datetime,operation_type,amount
+ATM-025,2026-03-01T09:00:00Z,withdrawal,125.50
+ATM-025,2026-03-01T13:30:00Z,cash_withdrawal,80
+ATM-025,2026-03-02T10:15:00Z,deposit,250
+ATM-025,2026-03-02T16:45:00Z,cash_deposit,50.25
+ATM-025,2026-03-03T08:20:00Z,withdrawal,310.75
+ATM-025,2026-03-03T18:05:00Z,cash_withdrawal,40

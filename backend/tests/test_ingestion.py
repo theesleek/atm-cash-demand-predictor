@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,9 @@ from app.models.atm import ATM
 from app.models.auth import AuditLog, Role, User
 from app.models.ingestion import ATMHistoryRecord, DatasetVersion
 from app.services.ingestion_service import IngestionService
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
@@ -110,6 +114,86 @@ def test_missing_required_columns_are_rejected_without_records(import_environmen
     assert body["rows_rejected"] == 1
     assert body["validation_report"]["schema_errors"] == ["MISSING_REQUIRED_FIELD"]
     assert set(body["validation_report"]["rejected_rows"][0]["missing_columns"]) == {"datetime", "operation_type"}
+    assert session.query(ATMHistoryRecord).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("filename", "csv_content", "expected_error"),
+    [
+        ("empty.csv", "", "EMPTY_FILE"),
+        ("raw-kaggle.csv", "datetime,atm_id,operation_type,client_id,operation_value\n2026-01-01,74,1,10,25\n", "UNSUPPORTED_RAW_KAGGLE_SCHEMA"),
+        ("prediction.csv", "datetime,atm_id\n2026-01-01,74\n", "PREDICTION_INPUT_NOT_SUPPORTED"),
+        ("extra.csv", "atm_id,datetime,operation_type,amount,unexpected\nATM-025,2026-01-01T00:00:00Z,withdrawal,10,x\n", "UNSUPPORTED_COLUMNS"),
+        ("malformed.csv", 'atm_id,datetime,operation_type,amount\n"ATM-025,2026-01-01T00:00:00Z,withdrawal,10\n', "MALFORMED_CSV"),
+        ("duplicate-header.csv", "atm_id,datetime,operation_type,amount,amount\nATM-025,2026-01-01T00:00:00Z,withdrawal,10\n", "DUPLICATE_HEADER"),
+    ],
+)
+def test_csv_schema_errors_are_explicit_and_do_not_ingest(import_environment, filename, csv_content, expected_error) -> None:
+    client, session, _admin, analyst, _atm = import_environment
+
+    response = client.post(
+        "/data-imports/validate",
+        files={"file": (filename, csv_content, "text/csv")},
+        headers=_headers(analyst, web=True),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "REJECTED"
+    assert expected_error in body["validation_report"]["schema_errors"]
+    assert session.query(ATMHistoryRecord).count() == 0
+
+
+@pytest.mark.parametrize(
+    "csv_content",
+    [
+        "atm_id,datetime,operation_type,amount\nATM-025,2026-01-01T00:00:00Z,withdrawal,10,unexpected\n",
+        "atm_id,datetime,operation_type,amount\nATM-025,2026-01-01T00:00:00Z,withdrawal\n",
+    ],
+)
+def test_csv_rows_with_invalid_field_counts_are_rejected(import_environment, csv_content) -> None:
+    client, session, _admin, analyst, _atm = import_environment
+
+    response = client.post(
+        "/data-imports/validate",
+        files={"file": ("invalid-row-width.csv", csv_content, "text/csv")},
+        headers=_headers(analyst, web=True),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "REJECTED"
+    assert body["validation_report"]["schema_errors"] == ["INVALID_ROW_WIDTH"]
+    assert body["validation_report"]["rejected_rows"][0]["reasons"] == ["INVALID_ROW_WIDTH"]
+    assert session.query(ATMHistoryRecord).count() == 0
+
+
+def test_operational_csv_fixtures_exercise_real_validation_endpoint(import_environment) -> None:
+    client, session, _admin, analyst, _atm = import_environment
+
+    valid_path = FIXTURE_DIR / "operational_upload_valid.csv"
+    valid_response = client.post(
+        "/data-imports/validate",
+        files={"file": (valid_path.name, valid_path.read_bytes(), "text/csv")},
+        headers=_headers(analyst, web=True),
+    )
+    assert valid_response.status_code == 201
+    valid_body = valid_response.json()
+    assert valid_body["status"] == "VALIDATED"
+    assert valid_body["rows_received"] == 6
+    assert valid_body["rows_accepted"] == 6
+    assert session.query(ATMHistoryRecord).count() == 0
+
+    invalid_path = FIXTURE_DIR / "operational_upload_invalid_schema.csv"
+    invalid_response = client.post(
+        "/data-imports/validate",
+        files={"file": (invalid_path.name, invalid_path.read_bytes(), "text/csv")},
+        headers=_headers(analyst, web=True),
+    )
+    assert invalid_response.status_code == 201
+    invalid_body = invalid_response.json()
+    assert invalid_body["status"] == "REJECTED"
+    assert invalid_body["validation_report"]["schema_errors"] == ["UNSUPPORTED_RAW_KAGGLE_SCHEMA"]
     assert session.query(ATMHistoryRecord).count() == 0
 
 
