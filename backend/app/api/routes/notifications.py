@@ -13,6 +13,7 @@ from app.models.auth import User
 from app.services.notification_service import (
     NotificationConfigurationError,
     NotificationService,
+    TelegramTestConfigurationError,
     verify_webhook_secret,
 )
 
@@ -46,6 +47,27 @@ def send_test_email(
                 "status": "FAILED",
                 "reason": "EMAIL_RECIPIENTS_NOT_CONFIGURED",
                 "message": "No configured test-email recipients are available.",
+            },
+        )
+    if result["status"] == "FAILED":
+        return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content=result)
+    return result
+
+
+@router.post("/test-telegram", response_model=None)
+def send_test_telegram(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("dashboard:read")),
+) -> dict[str, object] | JSONResponse:
+    try:
+        result = NotificationService(db).send_test_telegram(user)
+    except TelegramTestConfigurationError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "status": "FAILED",
+                "reason": str(exc),
+                "message": "The authenticated account must be active and linked to Telegram.",
             },
         )
     if result["status"] == "FAILED":

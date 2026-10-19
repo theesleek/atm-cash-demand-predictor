@@ -24,7 +24,11 @@ from app.models.replenishment import Replenishment
 from app.services import notification_service as notification_module
 from app.api.routes import notifications as notification_routes
 from app.services.alert_service import AlertService
-from app.services.notification_service import NotificationService, verify_webhook_secret
+from app.services.notification_service import (
+    NotificationService,
+    TelegramTestConfigurationError,
+    verify_webhook_secret,
+)
 from app.services.replenishment_service import ReplenishmentService
 
 
@@ -332,6 +336,132 @@ def test_admin_test_email_returns_failure_and_logs_safe_smtp_details(
     assert log_record.error_type == "SMTPAuthenticationError"
     assert log_record.smtp_code == 535
     assert "credentials rejected" not in caplog.text
+
+
+def test_authenticated_telegram_test_sends_only_to_requesting_user_and_logs_delivery(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        notification_module,
+        "_telegram_send",
+        lambda chat_id, text: sent.append((chat_id, text)),
+    )
+    requester = notification_session.query(User).filter(User.username == "notice-manager").one()
+    requester.telegram_chat_id = "requester-chat"
+    other = notification_session.query(User).filter(User.username == "notice-admin").one()
+    other.telegram_chat_id = "other-chat"
+    notification_session.commit()
+    token = create_access_token(requester.id, requester.token_version)
+
+    try:
+        with _notification_client(notification_session) as client:
+            response = client.post(
+                "/notifications/test-telegram",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "SENT"
+    assert sent == [
+        (
+            "requester-chat",
+            "ATM Cash Intelligence Telegram test\nThis is a Telegram delivery test for your linked account.",
+        )
+    ]
+    deliveries = notification_session.query(NotificationDelivery).filter_by(event_type="TELEGRAM_TEST").all()
+    assert len(deliveries) == 1
+    assert deliveries[0].channel == "TELEGRAM"
+    assert deliveries[0].recipient == "requester-chat"
+    assert deliveries[0].status == "SENT"
+    assert deliveries[0].error is None
+
+
+def test_telegram_test_provider_failure_returns_502_and_logs_failed_delivery(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    monkeypatch.setattr(
+        notification_module,
+        "_telegram_send",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("provider response contains no safe details")),
+    )
+    requester = notification_session.query(User).filter(User.username == "notice-manager").one()
+    requester.telegram_chat_id = "requester-chat"
+    notification_session.commit()
+    token = create_access_token(requester.id, requester.token_version)
+
+    try:
+        with _notification_client(notification_session) as client:
+            response = client.post(
+                "/notifications/test-telegram",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 502
+    assert response.json()["status"] == "FAILED"
+    delivery = notification_session.query(NotificationDelivery).filter_by(event_type="TELEGRAM_TEST").one()
+    assert delivery.recipient == "requester-chat"
+    assert delivery.status == "FAILED"
+    assert delivery.error == "RuntimeError"
+
+
+def test_telegram_test_requires_authentication(
+    notification_session: Session,
+) -> None:
+    try:
+        with _notification_client(notification_session) as client:
+            response = client.post("/notifications/test-telegram")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 401
+    assert notification_session.query(NotificationDelivery).filter_by(event_type="TELEGRAM_TEST").count() == 0
+
+
+def test_telegram_test_rejects_unlinked_account_without_delivery(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    sender = lambda *_args: pytest.fail("Telegram provider must not be called")
+    monkeypatch.setattr(notification_module, "_telegram_send", sender)
+    requester = notification_session.query(User).filter(User.username == "notice-manager").one()
+    token = create_access_token(requester.id, requester.token_version)
+
+    try:
+        with _notification_client(notification_session) as client:
+            response = client.post(
+                "/notifications/test-telegram",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "TELEGRAM_ACCOUNT_NOT_LINKED"
+    assert notification_session.query(NotificationDelivery).filter_by(event_type="TELEGRAM_TEST").count() == 0
+
+
+def test_telegram_test_rejects_inactive_account_before_delivery(
+    notification_session: Session,
+) -> None:
+    requester = notification_session.query(User).filter(User.username == "notice-manager").one()
+    requester.telegram_chat_id = "inactive-chat"
+    requester.is_active = False
+    notification_session.commit()
+
+    with pytest.raises(TelegramTestConfigurationError, match="TELEGRAM_ACCOUNT_INACTIVE"):
+        NotificationService(notification_session).send_test_telegram(requester)
+
+    assert notification_session.query(NotificationDelivery).filter_by(event_type="TELEGRAM_TEST").count() == 0
 
 
 def test_one_time_linking_and_telegram_acknowledgement(

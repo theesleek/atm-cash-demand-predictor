@@ -40,6 +40,10 @@ class NotificationConfigurationError(RuntimeError):
     pass
 
 
+class TelegramTestConfigurationError(RuntimeError):
+    pass
+
+
 def register_telegram_webhook() -> bool:
     if not settings.telegram_token or not settings.telegram_webhook_url or not settings.telegram_webhook_secret:
         return False
@@ -212,6 +216,20 @@ class NotificationService:
             "failed": failed,
             "deliveries": deliveries,
         }
+
+    def send_test_telegram(self, user: User) -> dict[str, object]:
+        if not user.is_active:
+            raise TelegramTestConfigurationError("TELEGRAM_ACCOUNT_INACTIVE")
+        if not user.telegram_chat_id:
+            raise TelegramTestConfigurationError("TELEGRAM_ACCOUNT_NOT_LINKED")
+        return self._deliver(
+            "TELEGRAM_TEST",
+            "TELEGRAM",
+            user.telegram_chat_id,
+            "ATM Cash Intelligence Telegram test",
+            "This is a Telegram delivery test for your linked account.",
+            user.telegram_chat_id,
+        )
 
     def enqueue_notification(self, event_type: str, subject: str, message: str, *, dedupe_key: str) -> dict[str, object]:
         job = enqueue_job(
