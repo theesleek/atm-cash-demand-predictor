@@ -1,5 +1,16 @@
 const DEFAULT_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 10000;
+const DEFAULT_API_URL = 'http://localhost:8000';
+
+export function buildRealtimeWebSocketUrl(apiUrl = import.meta.env.VITE_API_URL || DEFAULT_API_URL) {
+  if (apiUrl.startsWith('/')) {
+    return `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${apiUrl}/ws/events`;
+  }
+
+  const endpoint = new URL('/ws/events', apiUrl);
+  endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
+  return endpoint.toString();
+}
 
 export function consumeUnseenRealtimeEvents(events, seenRef) {
   if (seenRef.current === null) {
@@ -26,10 +37,7 @@ export function connectRealtime({ token, onEvent, onStatus }) {
   const connect = () => {
     if (stopped) return;
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-    const configuredEndpoint = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/events';
-    const endpoint = configuredEndpoint.startsWith('/')
-      ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${configuredEndpoint}`
-      : configuredEndpoint;
+    const endpoint = buildRealtimeWebSocketUrl();
     let currentSocket;
     try {
       currentSocket = new WebSocket(endpoint, ['atm-events', `bearer.${token}`]);
