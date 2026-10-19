@@ -35,6 +35,11 @@ class Settings:
     smtp_username: str | None = os.getenv("SMTP_USERNAME")
     smtp_password: str | None = os.getenv("SMTP_PASSWORD")
     smtp_from_email: str | None = os.getenv("SMTP_FROM_EMAIL")
+    notification_email_provider: str = os.getenv("NOTIFICATION_EMAIL_PROVIDER", "smtp").lower()
+    gmail_api_client_id: str | None = os.getenv("GMAIL_API_CLIENT_ID")
+    gmail_api_client_secret: str | None = os.getenv("GMAIL_API_CLIENT_SECRET")
+    gmail_api_refresh_token: str | None = os.getenv("GMAIL_API_REFRESH_TOKEN")
+    gmail_api_sender_email: str | None = os.getenv("GMAIL_API_SENDER_EMAIL")
     notification_email_recipients: tuple[str, ...] = tuple(
         address.strip()
         for address in os.getenv("NOTIFICATION_EMAIL_RECIPIENTS", "").split(",")
@@ -61,6 +66,8 @@ class Settings:
             raise RuntimeError("JWT_EXPIRATION_MINUTES must be at least 1")
         if self.login_rate_limit_attempts < 1 or self.login_rate_limit_window_seconds < 1:
             raise RuntimeError("Login rate-limit settings must be positive")
+        if self.notification_email_provider not in {"smtp", "gmail_api"}:
+            raise RuntimeError("NOTIFICATION_EMAIL_PROVIDER must be smtp or gmail_api")
         if self.environment == "production":
             if len(self.jwt_secret_key) < 32:
                 raise RuntimeError("JWT_SECRET_KEY must be configured with at least 32 characters")

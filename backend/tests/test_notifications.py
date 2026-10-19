@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -125,6 +126,111 @@ def test_provider_failures_are_logged_without_error_details(
     assert [entry["status"] for entry in result] == ["FAILED", "FAILED"]
     assert all(entry.error == "RuntimeError" for entry in notification_session.query(NotificationDelivery).all())
     assert all("sensitive" not in (entry.error or "") for entry in notification_session.query(NotificationDelivery).all())
+
+
+def test_gmail_api_delivery_refreshes_token_and_sends_to_each_recipient(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class Response:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    def fake_post(url: str, **kwargs: object) -> Response:
+        calls.append((url, kwargs))
+        if url.endswith("/token"):
+            return Response({"access_token": "test-access-token"})
+        return Response({"id": "sent-message"})
+
+    monkeypatch.setattr(notification_module.httpx, "post", fake_post)
+    monkeypatch.setattr(
+        notification_module,
+        "settings",
+        replace(
+            notification_module.settings,
+            notification_email_provider="gmail_api",
+            gmail_api_client_id="client-id",
+            gmail_api_client_secret="client-secret",
+            gmail_api_refresh_token="refresh-token",
+            gmail_api_sender_email="sender@example.test",
+            notification_email_recipients=("one@example.test", "two@example.test"),
+        ),
+    )
+
+    result = NotificationService(notification_session).notify("TEST", "Subject", "Body")
+
+    assert [entry["status"] for entry in result[-2:]] == ["SENT", "SENT"]
+    assert [url for url, _kwargs in calls] == [
+        "https://oauth2.googleapis.com/token",
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "https://oauth2.googleapis.com/token",
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    ]
+    token_kwargs = calls[0][1]
+    assert token_kwargs["data"]["scope"] == notification_module.GMAIL_SEND_SCOPE  # type: ignore[index]
+    api_kwargs = calls[1][1]
+    assert api_kwargs["headers"] == {"Authorization": "Bearer test-access-token"}
+    raw = api_kwargs["json"]["raw"]  # type: ignore[index]
+    assert b"To: one@example.test" in base64.urlsafe_b64decode(str(raw))
+
+
+def test_gmail_api_failure_is_logged_as_failed_delivery(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            raise notification_module.httpx.HTTPStatusError(
+                "provider failure",
+                request=notification_module.httpx.Request("POST", "https://example.test"),
+                response=notification_module.httpx.Response(401),
+            )
+
+        def json(self) -> dict[str, object]:
+            return {"access_token": "test-access-token"}
+
+    monkeypatch.setattr(notification_module.httpx, "post", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(
+        notification_module,
+        "settings",
+        replace(
+            notification_module.settings,
+            notification_email_provider="gmail_api",
+            gmail_api_client_id="client-id",
+            gmail_api_client_secret="client-secret",
+            gmail_api_refresh_token="refresh-token",
+            gmail_api_sender_email="sender@example.test",
+            notification_email_recipients=("ops@example.test",),
+        ),
+    )
+
+    result = NotificationService(notification_session).notify("TEST", "Subject", "Body")
+
+    assert result[-1]["status"] == "FAILED"
+    delivery = notification_session.query(NotificationDelivery).filter_by(channel="EMAIL").one()
+    assert delivery.error == "RuntimeError"
+
+
+def test_gmail_api_missing_configuration_does_not_attempt_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notification_module.httpx, "post", lambda *_args, **_kwargs: pytest.fail("network call"))
+    monkeypatch.setattr(
+        notification_module,
+        "settings",
+        replace(notification_module.settings, gmail_api_client_id=None),
+    )
+
+    with pytest.raises(RuntimeError, match="not configured"):
+        notification_module._gmail_api_send("ops@example.test", "Subject", "Body")
 
 
 def _notification_client(notification_session: Session) -> TestClient:

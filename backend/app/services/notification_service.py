@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 TelegramSender = Callable[[str, str], None]
 EmailSender = Callable[[str, str, str], None]
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
 
 class NotificationConfigurationError(RuntimeError):
@@ -90,6 +92,51 @@ def _smtp_send(recipient: str, subject: str, body: str) -> None:
         server.send_message(message)
 
 
+def _gmail_api_send(recipient: str, subject: str, body: str) -> None:
+    required = (
+        settings.gmail_api_client_id,
+        settings.gmail_api_client_secret,
+        settings.gmail_api_refresh_token,
+        settings.gmail_api_sender_email,
+    )
+    if not all(required):
+        raise RuntimeError("Gmail API provider is not configured")
+
+    try:
+        token_response = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": settings.gmail_api_client_id,
+                "client_secret": settings.gmail_api_client_secret,
+                "refresh_token": settings.gmail_api_refresh_token,
+                "grant_type": "refresh_token",
+                "scope": GMAIL_SEND_SCOPE,
+            },
+            timeout=15.0,
+        )
+        token_response.raise_for_status()
+        access_token = token_response.json().get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise RuntimeError("Gmail API token response was invalid")
+
+        message = EmailMessage()
+        message["From"] = settings.gmail_api_sender_email
+        message["To"] = recipient
+        message["Subject"] = subject
+        message.set_content(body)
+        api_response = httpx.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"raw": base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")},
+            timeout=15.0,
+        )
+        api_response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise RuntimeError("Gmail API request timed out") from exc
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise RuntimeError("Gmail API request failed") from exc
+
+
 class NotificationService:
     LINK_TOKEN_TTL = timedelta(minutes=10)
 
@@ -102,7 +149,13 @@ class NotificationService:
         self.session = session
         self.repository = NotificationRepository(session)
         self.telegram_sender = telegram_sender or _telegram_send
-        self.email_sender = email_sender or _smtp_send
+        self.email_sender = email_sender or self._configured_email_sender()
+
+    @staticmethod
+    def _configured_email_sender() -> EmailSender:
+        if settings.notification_email_provider == "gmail_api":
+            return _gmail_api_send
+        return _smtp_send
 
     def notify(self, event_type: str, subject: str, message: str) -> list[dict[str, object]]:
         results: list[dict[str, object]] = []
@@ -308,11 +361,14 @@ class NotificationService:
                     "event_type": event_type,
                     "channel": channel,
                     "error_type": type(exc).__name__,
-                    "smtp_host": settings.smtp_host,
-                    "smtp_port": settings.smtp_port,
                 }
-                if isinstance(exc, smtplib.SMTPResponseException):
-                    details["smtp_code"] = exc.smtp_code
+                if settings.notification_email_provider == "smtp":
+                    details["smtp_host"] = settings.smtp_host
+                    details["smtp_port"] = settings.smtp_port
+                    if isinstance(exc, smtplib.SMTPResponseException):
+                        details["smtp_code"] = exc.smtp_code
+                else:
+                    details["provider"] = settings.notification_email_provider
                 logger.warning("email_notification_delivery_failed", extra=details)
         else:
             status = "SENT"
