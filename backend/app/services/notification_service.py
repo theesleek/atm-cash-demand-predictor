@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import smtplib
 import ssl
@@ -26,8 +27,15 @@ from app.realtime import publish_realtime_event
 from app.services.alert_service import AlertNotFoundError, AlertService, AlertStateError
 
 
+logger = logging.getLogger(__name__)
+
+
 TelegramSender = Callable[[str, str], None]
 EmailSender = Callable[[str, str, str], None]
+
+
+class NotificationConfigurationError(RuntimeError):
+    pass
 
 
 def register_telegram_webhook() -> bool:
@@ -125,6 +133,32 @@ class NotificationService:
             for recipient in recipients:
                 results.append(self._deliver(event_type, "EMAIL", recipient, subject, message, recipient))
         return results
+
+    def send_test_email(self) -> dict[str, object]:
+        recipients = tuple(dict.fromkeys(settings.notification_email_recipients))
+        if not recipients:
+            raise NotificationConfigurationError(
+                "NOTIFICATION_EMAIL_RECIPIENTS is not configured"
+            )
+
+        subject = "[ATM Cash Intelligence] SMTP test email"
+        message = (
+            "This is a diagnostic test email from ATM Cash Intelligence.\n\n"
+            "It confirms the configured Gmail SMTP delivery path. "
+            "It is not an operational alert or replenishment request."
+        )
+        deliveries = [
+            self._deliver("EMAIL_TEST", "EMAIL", recipient, subject, message, recipient)
+            for recipient in recipients
+        ]
+        failed = sum(1 for delivery in deliveries if delivery["status"] != "SENT")
+        return {
+            "status": "FAILED" if failed else "SENT",
+            "attempted": len(deliveries),
+            "succeeded": len(deliveries) - failed,
+            "failed": failed,
+            "deliveries": deliveries,
+        }
 
     def enqueue_notification(self, event_type: str, subject: str, message: str, *, dedupe_key: str) -> dict[str, object]:
         job = enqueue_job(
@@ -269,6 +303,17 @@ class NotificationService:
         except Exception as exc:
             status = "FAILED"
             error = type(exc).__name__
+            if channel == "EMAIL":
+                details: dict[str, object] = {
+                    "event_type": event_type,
+                    "channel": channel,
+                    "error_type": type(exc).__name__,
+                    "smtp_host": settings.smtp_host,
+                    "smtp_port": settings.smtp_port,
+                }
+                if isinstance(exc, smtplib.SMTPResponseException):
+                    details["smtp_code"] = exc.smtp_code
+                logger.warning("email_notification_delivery_failed", extra=details)
         else:
             status = "SENT"
             error = None

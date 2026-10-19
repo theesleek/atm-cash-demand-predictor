@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timezone
+import smtplib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +40,7 @@ def notification_session() -> Iterator[Session]:
     session.add_all(roles.values())
     session.commit()
     manager = User(username="notice-manager", password_hash="not-used", role_id=roles["BANK_MANAGER"].id)
+    admin = User(username="notice-admin", password_hash="not-used", role_id=roles["SUPER_ADMIN"].id)
     atm = ATM(
         atm_code="ATM-NOTICE",
         branch_id="BRANCH-NOTICE",
@@ -47,9 +49,10 @@ def notification_session() -> Iterator[Session]:
         current_cash=5000.0,
         daily_demand=1000.0,
     )
-    session.add_all([manager, atm])
+    session.add_all([manager, admin, atm])
     session.commit()
     session.refresh(manager)
+    session.refresh(admin)
     session.refresh(atm)
     forecast = Forecast(
         atm_id=atm.id,
@@ -122,6 +125,107 @@ def test_provider_failures_are_logged_without_error_details(
     assert [entry["status"] for entry in result] == ["FAILED", "FAILED"]
     assert all(entry.error == "RuntimeError" for entry in notification_session.query(NotificationDelivery).all())
     assert all("sensitive" not in (entry.error or "") for entry in notification_session.query(NotificationDelivery).all())
+
+
+def _notification_client(notification_session: Session) -> TestClient:
+    def override_get_db() -> Iterator[Session]:
+        yield notification_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    return TestClient(app)
+
+
+def test_test_email_requires_authentication_and_admin_permission(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    manager = notification_session.query(User).filter(User.username == "notice-manager").one()
+    manager_token = create_access_token(manager.id, manager.token_version)
+    try:
+        with _notification_client(notification_session) as client:
+            assert client.post("/notifications/test-email").status_code == 401
+            denied = client.post(
+                "/notifications/test-email",
+                headers={"Authorization": f"Bearer {manager_token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert denied.status_code == 403
+
+
+def test_admin_test_email_sends_once_to_each_configured_recipient(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    _test_settings(monkeypatch, ("ops-one@example.test", "ops-two@example.test", "ops-one@example.test"))
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        notification_module,
+        "_smtp_send",
+        lambda recipient, subject, body: sent.append((recipient, subject, body)),
+    )
+    admin = notification_session.query(User).filter(User.username == "notice-admin").one()
+    token = create_access_token(admin.id, admin.token_version)
+    try:
+        with _notification_client(notification_session) as client:
+            response = client.post(
+                "/notifications/test-email",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "SENT"
+    assert response.json()["attempted"] == 2
+    assert [recipient for recipient, _, _ in sent] == ["ops-one@example.test", "ops-two@example.test"]
+    assert all(subject == "[ATM Cash Intelligence] SMTP test email" for _, subject, _ in sent)
+    assert all("diagnostic test email" in body for _, _, body in sent)
+    deliveries = notification_session.query(NotificationDelivery).filter(
+        NotificationDelivery.event_type == "EMAIL_TEST"
+    ).all()
+    assert len(deliveries) == 2
+    assert {delivery.status for delivery in deliveries} == {"SENT"}
+
+
+def test_admin_test_email_returns_failure_and_logs_safe_smtp_details(
+    notification_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "phase-nine-notification-test-secret-over-32-characters")
+    _test_settings(monkeypatch)
+
+    def fail_send(*_args: str) -> None:
+        raise smtplib.SMTPAuthenticationError(535, b"credentials rejected")
+
+    monkeypatch.setattr(notification_module, "_smtp_send", fail_send)
+    admin = notification_session.query(User).filter(User.username == "notice-admin").one()
+    token = create_access_token(admin.id, admin.token_version)
+    try:
+        with _notification_client(notification_session) as client:
+            with caplog.at_level("WARNING", logger=notification_module.__name__):
+                response = client.post(
+                    "/notifications/test-email",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 502
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["failed"] == 1
+    delivery = notification_session.query(NotificationDelivery).filter(
+        NotificationDelivery.event_type == "EMAIL_TEST"
+    ).one()
+    assert delivery.status == "FAILED"
+    log_record = next(record for record in caplog.records if record.message == "email_notification_delivery_failed")
+    assert log_record.error_type == "SMTPAuthenticationError"
+    assert log_record.smtp_code == 535
+    assert "credentials rejected" not in caplog.text
 
 
 def test_one_time_linking_and_telegram_acknowledgement(
