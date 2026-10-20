@@ -10,17 +10,29 @@ banking or ATM infrastructure. Production deployment, external notification
 delivery, and verified withdrawal-demand accuracy remain deployment-specific
 work.
 
-## Live Demo & Links
+## Live Application
 
-- [Open the live frontend](https://atm-cash-demand-predictor.pages.dev/) —
-  hosted on Cloudflare Pages. The repository does not independently verify
-  that every backend feature is currently available in production.
-- [GitHub repository](https://github.com/theesleek/atm-cash-demand-predictor) —
-  source code, documentation, and verification history.
-- **Backend API and deployed API docs:** the repository does not record a
-  verified Render service URL, so the production API, Swagger UI, and OpenAPI
-  JSON links are intentionally not guessed. Supply the real Render URL before
-  publishing those deployment links.
+**Open ATM Cash Intelligence:** [Launch Application](https://atm-cash-demand-predictor.pages.dev/)
+
+The frontend is hosted on Cloudflare Pages. This known application URL does
+not imply that every backend feature has been verified in production.
+
+## Developer & API Resources
+
+<details>
+<summary>Show backend, API, and source links</summary>
+
+- **Backend Service:** [Open Render backend](https://atm-cash-demand-predictor.onrender.com/)
+- **Swagger UI:** [Open deployed Swagger UI](https://atm-cash-demand-predictor.onrender.com/docs)
+- **OpenAPI Schema:** [View deployed OpenAPI schema](https://atm-cash-demand-predictor.onrender.com/openapi.json)
+- **Source Repository:** [View the GitHub source repository](https://github.com/theesleek/atm-cash-demand-predictor)
+
+FastAPI uses its standard `/docs` and `/openapi.json` routes. The Render
+deployment for commit `582a484` is reported as **Failed**, so these deployment
+links are references only and are not claims that the backend or API
+documentation is currently healthy or reachable.
+
+</details>
 
 The application uses React/Vite and FastAPI with PostgreSQL-oriented
 deployment, durable background jobs, and notification integrations. SMTP is
@@ -47,9 +59,8 @@ operation.
 
 The Cloudflare Pages frontend origin is present in the backend CORS allowlist,
 but the repository does not independently verify that this deployment is
-currently live. A Render backend/service URL is not recorded in the repository;
-the deployed backend and its `/docs` and `/openapi.json` endpoints therefore
-remain to be confirmed.
+currently live. The Render backend deployment and its API documentation remain
+unverified; see the expandable links above for reference only.
 
 The project remains documented as locally validated rather than production
 released. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the deployment
