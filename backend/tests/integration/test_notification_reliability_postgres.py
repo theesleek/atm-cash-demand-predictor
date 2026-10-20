@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Lock
 from typing import Mapping
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -14,7 +14,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 # Keep this test suite from implicitly loading developer or production dotenv files.
@@ -24,6 +24,7 @@ from app.jobs import queue
 from app.models import atm, auth, notification, operations, replenishment  # noqa: F401
 from app.models.notification import NotificationDelivery
 from app.models.operations import BackgroundJob, NotificationOutbox
+from app.repositories.forecast_repository import ForecastRepository
 from app.repositories.notification_repository import NotificationRepository
 
 
@@ -136,6 +137,92 @@ def test_duplicate_outbox_staging_is_deduplicated_with_independent_sessions(post
     with Session(postgres_engine) as session:
         assert ids[0] == ids[1]
         assert session.query(NotificationOutbox).filter_by(event_key=event_key).count() == 1
+
+
+def test_concurrent_forecast_creation_is_idempotent(postgres_engine) -> None:
+    forecast_date = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    model_version = f"postgres-concurrency-{uuid4().hex}"
+    atm_code = f"ATM-CONCURRENCY-{uuid4().hex}"
+    with Session(postgres_engine) as seed:
+        record = atm.ATM(atm_code=atm_code, branch_id="BR-CONCURRENCY", region="Test")
+        seed.add(record)
+        seed.commit()
+        atm_id = record.id
+
+    lookup_barrier = Barrier(2)
+    lookup_count = 0
+    lookup_count_lock = Lock()
+
+    def synchronize_initial_lookup(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal lookup_count
+        normalized = " ".join(statement.lower().split())
+        if not (normalized.startswith("select") and "from forecasts" in normalized and "model_version" in normalized):
+            return
+        with lookup_count_lock:
+            if lookup_count >= 2:
+                return
+            lookup_count += 1
+        lookup_barrier.wait(timeout=30)
+
+    def create_forecast():
+        with Session(postgres_engine) as session:
+            repository = ForecastRepository(session)
+            forecast, created = repository.get_or_create(
+                atm_id=atm_id,
+                predicted_demand=100.0,
+                risk_level="NORMAL",
+                recommended_top_up=50.0,
+                forecast_date=forecast_date,
+                model_version=model_version,
+            )
+            assert session.get(type(forecast), forecast.id) is not None
+            return forecast.id, created
+
+    listener_attached = False
+    try:
+        event.listen(postgres_engine, "before_cursor_execute", synchronize_initial_lookup)
+        listener_attached = True
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(create_forecast), executor.submit(create_forecast)]
+            results = [future.result(timeout=60) for future in futures]
+
+        assert lookup_count == 2
+        assert {created for _forecast_id, created in results} == {True, False}
+        assert len({forecast_id for forecast_id, _created in results}) == 1
+
+        with Session(postgres_engine) as verify:
+            forecasts = (
+                verify.query(atm.Forecast)
+                .filter(
+                    atm.Forecast.atm_id == atm_id,
+                    atm.Forecast.forecast_date == forecast_date,
+                    atm.Forecast.model_version == model_version,
+                )
+                .all()
+            )
+            assert len(forecasts) == 1
+            existing, created = ForecastRepository(verify).get_or_create(
+                atm_id=atm_id,
+                predicted_demand=999.0,
+                risk_level="HIGH",
+                recommended_top_up=999.0,
+                forecast_date=forecast_date,
+                model_version=model_version,
+            )
+            assert existing.id == forecasts[0].id
+            assert created is False
+            assert verify.get(atm.Forecast, existing.id) is not None
+    finally:
+        if listener_attached:
+            event.remove(postgres_engine, "before_cursor_execute", synchronize_initial_lookup)
+        with Session(postgres_engine) as cleanup:
+            cleanup.query(atm.Forecast).filter(
+                atm.Forecast.atm_id == atm_id,
+                atm.Forecast.forecast_date == forecast_date,
+                atm.Forecast.model_version == model_version,
+            ).delete(synchronize_session=False)
+            cleanup.query(atm.ATM).filter(atm.ATM.id == atm_id).delete(synchronize_session=False)
+            cleanup.commit()
 
 
 def test_competing_background_job_claims_are_exclusive(postgres_engine) -> None:

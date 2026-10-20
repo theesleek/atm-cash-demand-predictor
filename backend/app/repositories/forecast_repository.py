@@ -9,6 +9,8 @@ from app.models.atm import Forecast
 
 
 class ForecastRepository:
+    FORECAST_IDENTITY_CONSTRAINT = "uq_forecasts_atm_date_model"
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -50,21 +52,17 @@ class ForecastRepository:
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
     ) -> Forecast:
-        forecast_date = self._require_forecast_date(forecast_date)
-        item = Forecast(
+        item, _created = self.get_or_create(
             atm_id=atm_id,
-            forecast_date=forecast_date,
             predicted_demand=predicted_demand,
-            predicted_signed_net_cash_flow=predicted_signed_net_cash_flow,
             risk_level=risk_level,
+            recommended_top_up=recommended_top_up,
+            forecast_date=forecast_date,
+            model_version=model_version,
+            predicted_signed_net_cash_flow=predicted_signed_net_cash_flow,
             risk_evaluation_status=risk_evaluation_status,
             risk_evaluation_reason=risk_evaluation_reason,
-            recommended_top_up=recommended_top_up,
-            model_version=model_version,
         )
-        self.session.add(item)
-        self.session.commit()
-        self.session.refresh(item)
         return item
 
     def get_or_create(
@@ -105,7 +103,10 @@ class ForecastRepository:
         self.session.add(item)
         try:
             self.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
+            if not self._is_forecast_identity_conflict(exc):
+                self.session.rollback()
+                raise
             self.session.rollback()
             existing = (
                 self.session.query(Forecast)
@@ -121,3 +122,22 @@ class ForecastRepository:
             return existing, False
         self.session.refresh(item)
         return item, True
+
+    @classmethod
+    def _is_forecast_identity_conflict(cls, error: IntegrityError) -> bool:
+        """Return true only for the forecast identity uniqueness violation."""
+        original = error.orig
+        sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+        constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
+        if sqlstate == "23505" and constraint_name == cls.FORECAST_IDENTITY_CONSTRAINT:
+            return True
+
+        sqlite_error_name = getattr(original, "sqlite_errorname", None)
+        message = str(original).lower()
+        return bool(
+            sqlite_error_name == "SQLITE_CONSTRAINT_UNIQUE"
+            and (
+                cls.FORECAST_IDENTITY_CONSTRAINT.lower() in message
+                or all(column in message for column in ("atm_id", "forecast_date", "model_version"))
+            )
+        )

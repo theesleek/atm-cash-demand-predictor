@@ -314,18 +314,19 @@ class ATMService:
             risk_evaluation_status=forecast.risk_evaluation_status,
             risk_evaluation_reason=forecast.risk_evaluation_reason,
         )
-        if forecast.risk_level is not None and forecast.projected_cash is not None:
+        persisted_risk = self._assess_persisted_forecast(persisted_forecast, current_cash, capacity)
+        if persisted_risk is not None:
             alert = self.alert_service.create_or_update_risk_alert(
                 atm_id=record.id,
                 atm_code=record.atm_code,
                 forecast_id=persisted_forecast.id,
-                severity=forecast.risk_level,
-                projected_cash=forecast.projected_cash,
+                severity=persisted_risk.risk_level,
+                projected_cash=persisted_risk.projected_cash,
             )
-            if alert is not None and forecast.risk_level.upper() in {"HIGH", "CRITICAL"}:
+            if alert is not None and persisted_risk.risk_level in {"HIGH", "CRITICAL"}:
                 from app.services.notification_service import NotificationService
 
-                event_type = f"RISK_{forecast.risk_level.upper()}"
+                event_type = f"RISK_{persisted_risk.risk_level}"
                 notification = NotificationService(self.session).notification_status(
                     event_type,
                     f"{event_type}:{alert.id}",
@@ -334,25 +335,25 @@ class ATMService:
             "atm_id": forecast.atm_id,
             "forecast_id": persisted_forecast.id,
             "alert_id": alert.id if alert is not None else None,
-            "forecast_date": forecast.forecast_date,
-            "predicted_demand": forecast.predicted_demand,
-            "predicted_signed_net_cash_flow": forecast.predicted_signed_net_cash_flow,
+            "forecast_date": persisted_forecast.forecast_date.date().isoformat(),
+            "predicted_demand": persisted_risk.predicted_demand if persisted_risk is not None else None,
+            "predicted_signed_net_cash_flow": float(persisted_forecast.predicted_signed_net_cash_flow) if persisted_forecast.predicted_signed_net_cash_flow is not None else None,
             "forecast_label": "signed_net_cash_flow",
-            "risk_demand_basis": forecast.predicted_demand,
-            "risk_level": forecast.risk_level,
-            "risk_evaluation_status": forecast.risk_evaluation_status,
-            "risk_evaluation_reason": forecast.risk_evaluation_reason,
-            "recommended_top_up": forecast.recommended_top_up,
-            "current_cash": forecast.current_cash,
-            "capacity": forecast.capacity,
+            "risk_demand_basis": persisted_risk.predicted_demand if persisted_risk is not None else None,
+            "risk_level": persisted_risk.risk_level if persisted_risk is not None else None,
+            "risk_evaluation_status": persisted_forecast.risk_evaluation_status,
+            "risk_evaluation_reason": persisted_forecast.risk_evaluation_reason,
+            "recommended_top_up": persisted_risk.recommended_top_up if persisted_risk is not None else None,
+            "current_cash": persisted_risk.current_cash if persisted_risk is not None else current_cash,
+            "capacity": capacity,
             "target": forecast.target,
             "model_name": forecast.model_name,
-            "model_version": forecast.model_version,
-            "projected_cash": forecast.projected_cash,
-            "warning_threshold": forecast.warning_threshold,
-            "high_threshold": forecast.high_threshold,
-            "critical_threshold": forecast.critical_threshold,
-            "safety_buffer": forecast.safety_buffer,
+            "model_version": persisted_forecast.model_version,
+            "projected_cash": persisted_risk.projected_cash if persisted_risk is not None else None,
+            "warning_threshold": persisted_risk.warning_threshold if persisted_risk is not None else None,
+            "high_threshold": persisted_risk.high_threshold if persisted_risk is not None else None,
+            "critical_threshold": persisted_risk.critical_threshold if persisted_risk is not None else None,
+            "safety_buffer": persisted_risk.safety_buffer if persisted_risk is not None else None,
             "inventory_source": "cash_inventory" if inventory is not None else "atm_record_fallback",
             "forecast_source": forecast.source,
             "forecast_created": forecast_created,
