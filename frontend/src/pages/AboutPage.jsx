@@ -22,6 +22,20 @@ const capabilities = [
   'Real-time updates for connected authenticated clients',
 ];
 
+const glossary = [
+  ['ATM', 'Automated Teller Machine — a machine customers use to withdraw or deposit cash.'],
+  ['Forecast', 'A model-based estimate for a future date. It is an estimate, not a guarantee of what will happen.'],
+  ['Signed net cash flow', 'The forecasted net value calculated from the dataset’s cash-flow values while keeping positive and negative values. The source units and the operational meaning of the signs are not verified, so this is not the same as confirmed cash-withdrawal demand.'],
+  ['Linear Regression', 'A machine-learning method that estimates an output by learning relationships between input features and past results.'],
+  ['Random Forest', 'A machine-learning method that combines results from many decision trees to make a prediction.'],
+  ['50/50 ensemble', 'The forecast combines the Linear Regression and Random Forest model predictions with equal weighting.'],
+  ['MAE', 'Mean Absolute Error: the average size of the prediction errors, ignoring whether each error is positive or negative. Lower is generally better when comparing the same target and evaluation data.'],
+  ['RMSE', 'Root Mean Squared Error: another measure of prediction error that penalizes larger errors more strongly. Lower is generally better when comparing the same target and evaluation data.'],
+  ['Bias', 'A tendency for predictions to be consistently higher or lower than actual values. Bias is not reported in the metrics currently shown.'],
+  ['Risk evaluation unavailable', 'The system cannot reliably calculate demand-based risk from this forecast because verified withdrawal-demand data is required.'],
+  ['Replenishment', 'The workflow for requesting and reviewing additional ATM cash. A forecast does not automatically approve or perform a replenishment.'],
+];
+
 function DetailRows({ rows }) {
   return (
     <dl className="about-detail-rows">
@@ -110,6 +124,11 @@ export default function AboutPage() {
           <ul className="about-capabilities">
             {capabilities.map((capability) => <li key={capability}>{capability}</li>)}
           </ul>
+        </AboutSection>
+
+        <AboutSection number="09" title="Understanding the Terms">
+          <p>Quick explanations for technical terms used in the dashboard and model metrics.</p>
+          <DetailRows rows={glossary} />
         </AboutSection>
       </div>
     </main>
