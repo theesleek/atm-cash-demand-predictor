@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Bell, ChartNoAxesCombined, ChevronRight, CircleUserRound, Database, Home as HomeIcon, House, Landmark, LogOut, Menu, Radio, X } from 'lucide-react';
+import { Activity, Bell, ChartNoAxesCombined, ChevronRight, CircleUserRound, Database, Home as HomeIcon, House, Landmark, LogOut, Menu, Radio, Users, X } from 'lucide-react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Button } from './ui';
@@ -21,6 +21,7 @@ const internalLinks = [
   { label: 'Replenishment', to: '/replenishments', icon: Radio },
   { label: 'Activity', to: '/activity', icon: Activity },
   { label: 'Profile', to: '/profile', icon: CircleUserRound },
+  { label: 'User Management', to: '/users', icon: Users, adminOnly: true },
 ];
 
 export function Navbar() {
@@ -91,11 +92,13 @@ export function Sidebar() {
         </Link>
         <p className="sidebar__label">Workspace</p>
         <nav className="sidebar__links" aria-label="Authenticated navigation">
-          {internalLinks.map(({ label, to, icon: Icon }) => (
-            <NavLink key={to} to={to} onClick={() => setMenuOpen(false)}>
-              <Icon size={17} strokeWidth={1.8} />{label}
-            </NavLink>
-          ))}
+          {internalLinks
+            .filter(({ adminOnly }) => !adminOnly || user?.role === 'SUPER_ADMIN')
+            .map(({ label, to, icon: Icon }) => (
+              <NavLink key={to} to={to} onClick={() => setMenuOpen(false)}>
+                <Icon size={17} strokeWidth={1.8} />{label}
+              </NavLink>
+            ))}
         </nav>
         <div className="sidebar__footer">
           {user && <div className="sidebar__user"><span className="user-avatar">{user.username.slice(0, 1).toUpperCase()}</span><span>{user.username}</span></div>}
