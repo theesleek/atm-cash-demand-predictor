@@ -10,6 +10,22 @@ banking or ATM infrastructure. Production deployment, external notification
 delivery, and verified withdrawal-demand accuracy remain deployment-specific
 work.
 
+## Live Demo & Links
+
+- [Open the live frontend](https://atm-cash-demand-predictor.pages.dev/) —
+  hosted on Cloudflare Pages. The repository does not independently verify
+  that every backend feature is currently available in production.
+- [GitHub repository](https://github.com/theesleek/atm-cash-demand-predictor) —
+  source code, documentation, and verification history.
+- **Backend API and deployed API docs:** the repository does not record a
+  verified Render service URL, so the production API, Swagger UI, and OpenAPI
+  JSON links are intentionally not guessed. Supply the real Render URL before
+  publishing those deployment links.
+
+The application uses React/Vite and FastAPI with PostgreSQL-oriented
+deployment, durable background jobs, and notification integrations. SMTP is
+the default email mechanism; Gmail API is an optional provider.
+
 ## What is implemented
 
 - Authenticated JWT sessions with role-based access control and audit logging.
@@ -29,18 +45,11 @@ operation.
 
 ## Access and deployment status
 
-The repository contains one configured frontend origin:
-
-- [Cloudflare Pages origin](https://atm-cash-demand-predictor.pages.dev) —
-  present in the backend CORS allowlist. The repository does not independently
-  verify that this deployment is currently live.
-
-No Render backend/service URL is recorded in the repository, so a production
-API base URL and a deployed Swagger URL are intentionally not guessed here.
-For a local server, the API base URL is `http://127.0.0.1:8000` and FastAPI
-provides [Swagger UI](http://127.0.0.1:8000/docs) and
-[OpenAPI JSON](http://127.0.0.1:8000/openapi.json). A deployed backend exposes
-the same `/docs` and `/openapi.json` paths after its host is confirmed.
+The Cloudflare Pages frontend origin is present in the backend CORS allowlist,
+but the repository does not independently verify that this deployment is
+currently live. A Render backend/service URL is not recorded in the repository;
+the deployed backend and its `/docs` and `/openapi.json` endpoints therefore
+remain to be confirmed.
 
 The project remains documented as locally validated rather than production
 released. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the deployment
@@ -175,6 +184,10 @@ For production-like operation, set `ENVIRONMENT=production`, use PostgreSQL,
 configure an allow-listed `CORS_ORIGINS`, and provide the required JWT and
 bootstrap administrator configuration names. Do not put values or credentials
 in source control.
+
+The local API runs at `http://127.0.0.1:8000`. Use [local Swagger UI](http://127.0.0.1:8000/docs)
+or [local OpenAPI JSON](http://127.0.0.1:8000/openapi.json) for local API
+exploration. These are development links, not production deployment claims.
 
 ### Database migrations
 
