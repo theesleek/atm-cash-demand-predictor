@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
@@ -92,8 +93,9 @@ def postgres_engine():
             revision = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one_or_none()
             if actual_database != config.database_name:
                 raise RuntimeError("Database identity changed during disposable PostgreSQL test setup")
-            if revision != "0006_notification_reliability":
-                raise RuntimeError("Migration 0006_notification_reliability is not installed")
+            expected_revision = ScriptDirectory.from_config(alembic_config).get_current_head()
+            if revision != expected_revision:
+                raise RuntimeError(f"Expected Alembic head {expected_revision} is not installed")
         yield engine
     finally:
         engine.dispose()
