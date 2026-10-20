@@ -75,7 +75,7 @@ class Forecast(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     atm_id: Mapped[int] = mapped_column(ForeignKey("atms.id"), nullable=False, index=True)
-    forecast_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow, index=True)
+    forecast_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     predicted_demand: Mapped[float | None] = mapped_column(Float, nullable=True)
     predicted_signed_net_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

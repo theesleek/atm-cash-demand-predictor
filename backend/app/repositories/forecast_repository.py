@@ -12,6 +12,12 @@ class ForecastRepository:
     def __init__(self, session: Session):
         self.session = session
 
+    @staticmethod
+    def _require_forecast_date(forecast_date: datetime | None) -> datetime:
+        if forecast_date is None:
+            raise ValueError("forecast_date is required")
+        return forecast_date
+
     def list_for_atm(self, atm_id: int) -> list[Forecast]:
         return self.session.query(Forecast).filter(Forecast.atm_id == atm_id).order_by(Forecast.forecast_date.desc()).all()
 
@@ -44,6 +50,7 @@ class ForecastRepository:
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
     ) -> Forecast:
+        forecast_date = self._require_forecast_date(forecast_date)
         item = Forecast(
             atm_id=atm_id,
             forecast_date=forecast_date,
@@ -72,6 +79,7 @@ class ForecastRepository:
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
     ) -> tuple[Forecast, bool]:
+        forecast_date = self._require_forecast_date(forecast_date)
         existing = (
             self.session.query(Forecast)
             .filter(
