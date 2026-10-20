@@ -793,7 +793,7 @@ h2 { margin: 0; font-size: 1rem; font-weight: 600; }
 .login-home-link { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; margin-top: 25px; color: #9daeb5; font-size: 0.75rem; }
 .login-home-link svg { transform: rotate(180deg); }
 .login-home-link:hover { color: var(--color-accent); }
-.login-panel__visual { max-width: none; min-height: 100%; align-self: stretch; aspect-ratio: auto; border: 0; border-left: 1px solid #34434a; border-radius: 0; box-shadow: none; }
+.login-panel__visual { max-width: none; min-height: 0; height: auto; align-self: center; aspect-ratio: 1 / 1; animation: none; border: 0; border-left: 1px solid #34434a; border-radius: 0; box-shadow: none; }
 .login-panel__visual canvas { filter: saturate(0.75) brightness(0.76); }
 .login-panel__visual .home-artwork__caption { right: 14px; bottom: 13px; opacity: 0.72; }
 
