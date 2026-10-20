@@ -94,6 +94,7 @@ def _create_forecast(session: Session, atm_id: int, forecast_date: datetime | No
         predicted_demand=1000.0,
         risk_level="WARNING",
         recommended_top_up=500.0,
+        forecast_type="withdrawal_demand",
         model_version="test",
     )
     session.add(forecast)

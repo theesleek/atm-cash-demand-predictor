@@ -69,6 +69,7 @@ def network_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[TestC
         predicted_demand=1500.0,
         risk_level="HIGH",
         recommended_top_up=1000.0,
+        forecast_type="withdrawal_demand",
         model_version="test",
     )
     inventory = CashInventory(

@@ -76,6 +76,7 @@ def replenishment_environment(
         predicted_demand=1200.0,
         risk_level="CRITICAL",
         recommended_top_up=1500.0,
+        forecast_type="withdrawal_demand",
         model_version="phase5-test",
     )
     inventory = CashInventory(

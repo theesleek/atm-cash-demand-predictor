@@ -90,8 +90,6 @@ class Forecast(Base):
     forecast_type: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default=FORECAST_TYPE_SIGNED_FLOW,
-        server_default=FORECAST_TYPE_SIGNED_FLOW,
         index=True,
     )
     model_version: Mapped[str] = mapped_column(String(64), nullable=False, default="phase2-synthetic", index=True)

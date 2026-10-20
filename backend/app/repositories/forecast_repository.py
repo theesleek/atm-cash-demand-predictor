@@ -6,7 +6,7 @@ from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.atm import FORECAST_TYPE_SIGNED_FLOW, FORECAST_TYPES, Forecast
+from app.models.atm import FORECAST_TYPES, Forecast
 
 
 class ForecastRepository:
@@ -71,7 +71,8 @@ class ForecastRepository:
         predicted_signed_net_cash_flow: float | None = None,
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
-        forecast_type: str = FORECAST_TYPE_SIGNED_FLOW,
+        *,
+        forecast_type: str,
     ) -> Forecast:
         item, _created = self.get_or_create(
             atm_id=atm_id,
@@ -98,7 +99,8 @@ class ForecastRepository:
         predicted_signed_net_cash_flow: float | None = None,
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
-        forecast_type: str = FORECAST_TYPE_SIGNED_FLOW,
+        *,
+        forecast_type: str,
     ) -> tuple[Forecast, bool]:
         forecast_date = self._require_forecast_date(forecast_date)
         forecast_type = self._require_forecast_type(forecast_type)

@@ -72,6 +72,7 @@ def realtime_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Test
         predicted_demand=1300.0,
         risk_level="HIGH",
         recommended_top_up=1500.0,
+        forecast_type="withdrawal_demand",
         model_version="test",
     )
     session.add(forecast)

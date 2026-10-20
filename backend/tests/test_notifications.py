@@ -74,6 +74,7 @@ def notification_session() -> Iterator[Session]:
         predicted_demand=1200.0,
         risk_level="HIGH",
         recommended_top_up=1200.0,
+        forecast_type="withdrawal_demand",
         model_version="test",
     )
     session.add(forecast)

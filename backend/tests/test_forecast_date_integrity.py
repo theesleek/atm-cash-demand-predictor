@@ -39,6 +39,7 @@ def _forecast(atm_id: int, forecast_date: datetime | None, model_version: str = 
         predicted_demand=100.0,
         risk_level="WARNING",
         recommended_top_up=50.0,
+        forecast_type="withdrawal_demand",
         model_version=model_version,
     )
 
@@ -47,7 +48,9 @@ def test_repository_rejects_null_forecast_date() -> None:
     session = _session()
     try:
         with pytest.raises(ValueError, match="forecast_date is required"):
-            ForecastRepository(session).get_or_create(1, 100.0, "WARNING", 50.0, None, "test")  # type: ignore[arg-type]
+            ForecastRepository(session).get_or_create(
+                1, 100.0, "WARNING", 50.0, None, "test", forecast_type="withdrawal_demand"
+            )  # type: ignore[arg-type]
     finally:
         session.close()
 

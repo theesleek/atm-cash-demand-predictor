@@ -215,6 +215,7 @@ def test_get_or_create_recovers_only_from_forecast_identity_conflict() -> None:
         recommended_top_up=0.0,
         forecast_date=datetime(2026, 10, 20, tzinfo=timezone.utc),
         model_version="model-v1",
+        forecast_type="withdrawal_demand",
     )
 
     assert result is winner
@@ -234,6 +235,7 @@ def test_get_or_create_reraises_unrelated_integrity_error() -> None:
             recommended_top_up=0.0,
             forecast_date=datetime(2026, 10, 20, tzinfo=timezone.utc),
             model_version="model-v1",
+            forecast_type="withdrawal_demand",
         )
 
     assert raised.value is error
