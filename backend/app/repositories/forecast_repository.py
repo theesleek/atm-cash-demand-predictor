@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.atm import Forecast
+from app.models.atm import FORECAST_TYPE_SIGNED_FLOW, FORECAST_TYPES, Forecast
 
 
 class ForecastRepository:
@@ -20,8 +21,23 @@ class ForecastRepository:
             raise ValueError("forecast_date is required")
         return forecast_date
 
+    @staticmethod
+    def _require_forecast_type(forecast_type: str) -> str:
+        if forecast_type not in FORECAST_TYPES:
+            raise ValueError("forecast_type must be 'withdrawal_demand' or 'signed_flow'")
+        return forecast_type
+
     def list_for_atm(self, atm_id: int) -> list[Forecast]:
-        return self.session.query(Forecast).filter(Forecast.atm_id == atm_id).order_by(Forecast.forecast_date.desc()).all()
+        return (
+            self.session.query(Forecast)
+            .filter(Forecast.atm_id == atm_id)
+            .order_by(
+                Forecast.forecast_date.desc(),
+                case((Forecast.forecast_type == "withdrawal_demand", 0), else_=1),
+                Forecast.id.desc(),
+            )
+            .all()
+        )
 
     def get(self, forecast_id: int) -> Forecast | None:
         return self.session.get(Forecast, forecast_id)
@@ -32,7 +48,11 @@ class ForecastRepository:
         forecasts = (
             self.session.query(Forecast)
             .filter(Forecast.atm_id.in_(atm_ids))
-            .order_by(Forecast.id.desc())
+            .order_by(
+                Forecast.forecast_date.desc(),
+                case((Forecast.forecast_type == "withdrawal_demand", 0), else_=1),
+                Forecast.id.desc(),
+            )
             .all()
         )
         latest: dict[int, Forecast] = {}
@@ -51,6 +71,7 @@ class ForecastRepository:
         predicted_signed_net_cash_flow: float | None = None,
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
+        forecast_type: str = FORECAST_TYPE_SIGNED_FLOW,
     ) -> Forecast:
         item, _created = self.get_or_create(
             atm_id=atm_id,
@@ -62,6 +83,7 @@ class ForecastRepository:
             predicted_signed_net_cash_flow=predicted_signed_net_cash_flow,
             risk_evaluation_status=risk_evaluation_status,
             risk_evaluation_reason=risk_evaluation_reason,
+            forecast_type=forecast_type,
         )
         return item
 
@@ -76,14 +98,17 @@ class ForecastRepository:
         predicted_signed_net_cash_flow: float | None = None,
         risk_evaluation_status: str = "AVAILABLE",
         risk_evaluation_reason: str | None = None,
+        forecast_type: str = FORECAST_TYPE_SIGNED_FLOW,
     ) -> tuple[Forecast, bool]:
         forecast_date = self._require_forecast_date(forecast_date)
+        forecast_type = self._require_forecast_type(forecast_type)
         existing = (
             self.session.query(Forecast)
             .filter(
                 Forecast.atm_id == atm_id,
                 Forecast.forecast_date == forecast_date,
                 Forecast.model_version == model_version,
+                Forecast.forecast_type == forecast_type,
             )
             .one_or_none()
         )
@@ -99,6 +124,7 @@ class ForecastRepository:
             risk_evaluation_reason=risk_evaluation_reason,
             recommended_top_up=recommended_top_up,
             model_version=model_version,
+            forecast_type=forecast_type,
         )
         self.session.add(item)
         try:
@@ -114,6 +140,7 @@ class ForecastRepository:
                     Forecast.atm_id == atm_id,
                     Forecast.forecast_date == forecast_date,
                     Forecast.model_version == model_version,
+                    Forecast.forecast_type == forecast_type,
                 )
                 .one_or_none()
             )
@@ -138,6 +165,6 @@ class ForecastRepository:
             sqlite_error_name == "SQLITE_CONSTRAINT_UNIQUE"
             and (
                 cls.FORECAST_IDENTITY_CONSTRAINT.lower() in message
-                or all(column in message for column in ("atm_id", "forecast_date", "model_version"))
+                or all(column in message for column in ("atm_id", "forecast_date", "model_version", "forecast_type"))
             )
         )

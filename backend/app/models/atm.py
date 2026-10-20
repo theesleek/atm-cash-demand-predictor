@@ -8,6 +8,11 @@ from sqlalchemy.orm import Mapped, relationship, mapped_column
 from app.db.base import Base
 
 
+FORECAST_TYPE_WITHDRAWAL_DEMAND = "withdrawal_demand"
+FORECAST_TYPE_SIGNED_FLOW = "signed_flow"
+FORECAST_TYPES = frozenset({FORECAST_TYPE_WITHDRAWAL_DEMAND, FORECAST_TYPE_SIGNED_FLOW})
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -82,6 +87,13 @@ class Forecast(Base):
     risk_evaluation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE", server_default="AVAILABLE")
     risk_evaluation_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     recommended_top_up: Mapped[float | None] = mapped_column(Float, nullable=True)
+    forecast_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=FORECAST_TYPE_SIGNED_FLOW,
+        server_default=FORECAST_TYPE_SIGNED_FLOW,
+        index=True,
+    )
     model_version: Mapped[str] = mapped_column(String(64), nullable=False, default="phase2-synthetic", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -99,7 +111,8 @@ class Forecast(Base):
             name="ck_forecasts_nonnegative_values",
         ),
         CheckConstraint("risk_level IN ('NORMAL', 'WARNING', 'HIGH', 'CRITICAL', 'normal', 'warning', 'high', 'critical')", name="ck_forecasts_risk_level"),
-        UniqueConstraint("atm_id", "forecast_date", "model_version", name="uq_forecasts_atm_date_model"),
+        CheckConstraint("forecast_type IN ('withdrawal_demand', 'signed_flow')", name="ck_forecasts_type"),
+        UniqueConstraint("atm_id", "forecast_date", "model_version", "forecast_type", name="uq_forecasts_atm_date_model"),
         Index("ix_forecasts_atm_date", "atm_id", "forecast_date"),
     )
 

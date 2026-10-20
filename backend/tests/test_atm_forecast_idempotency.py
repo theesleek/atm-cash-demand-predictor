@@ -53,6 +53,7 @@ def _service(monkeypatch: pytest.MonkeyPatch, *, created: bool, risk_level: str)
         capacity=10000.0,
         forecast_date="2026-10-20T00:00:00+00:00",
         target="withdrawal_demand",
+        forecast_type="withdrawal_demand",
         model_name="generated-model",
         model_version="model-v1",
         projected_cash=1.0,
@@ -75,6 +76,7 @@ def _service(monkeypatch: pytest.MonkeyPatch, *, created: bool, risk_level: str)
         risk_evaluation_status="AVAILABLE",
         risk_evaluation_reason=None,
         model_version="model-v1",
+        forecast_type="withdrawal_demand",
     )
     alerts = _AlertService()
     assessed_forecasts = []
@@ -125,6 +127,7 @@ def test_get_forecast_uses_persisted_forecast_for_response_risk_and_notification
     assert result["forecast_id"] == persisted.id
     assert result["forecast_created"] is created
     assert result["forecast_date"] == persisted.forecast_date.date().isoformat()
+    assert result["forecast_type"] == persisted.forecast_type
     assert result["predicted_demand"] == persisted.predicted_demand
     assert result["predicted_demand"] != generated.predicted_demand
     assert result["predicted_signed_net_cash_flow"] == persisted.predicted_signed_net_cash_flow

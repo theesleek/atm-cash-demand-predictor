@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models.atm import ATM, Forecast
+from app.models.atm import ATM, FORECAST_TYPE_WITHDRAWAL_DEMAND, Forecast
 from app.models.replenishment import Replenishment
 
 
@@ -83,6 +83,10 @@ class ReplenishmentRepository:
         return (
             self.session.query(Forecast)
             .filter(Forecast.atm_id == atm_id)
-            .order_by(Forecast.forecast_date.desc(), Forecast.id.desc())
+            .order_by(
+                Forecast.forecast_date.desc(),
+                case((Forecast.forecast_type == FORECAST_TYPE_WITHDRAWAL_DEMAND, 0), else_=1),
+                Forecast.id.desc(),
+            )
             .first()
         )

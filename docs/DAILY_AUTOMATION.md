@@ -53,12 +53,16 @@ created forecast count, skipped ATMs, and failures.
 
 Before enabling production automation, apply the complete reviewed Alembic
 migration chain through `head`, including the latest release migration
-`0008_forecast_date_required`, through the normal release process. Migration
-`0007_daily_forecast_uniqueness` fails closed if existing duplicate
-`(atm_id, forecast_date, model_version)` rows are found. Migration
-`0008_forecast_date_required` first checks for existing rows where
+`0009_forecast_type_identity`, through the normal release process. Migration
+`0007_daily_forecast_uniqueness` classifies existing rows as
+`withdrawal_demand` or `signed_flow` and fails closed if a row is ambiguous or
+if duplicate `(atm_id, forecast_date, model_version, forecast_type)` rows are
+found. Migration `0008_forecast_date_required` first checks for existing rows where
 `forecasts.forecast_date` is `NULL`; it intentionally aborts if any are found.
+Migration `0009_forecast_type_identity` converges databases that had already
+applied the prior 0008 head to the explicit forecast-type identity schema.
 Review those records and resolve them using authoritative data and an approved
-data-maintenance procedure. Do not invent dates or delete records just to force
-the migration to succeed. Enable daily automation only after the schema
-migration chain completes successfully. This task does not apply migrations.
+data-maintenance procedure. Do not invent dates, forecast types, or predictions,
+or delete records just to force the migration to succeed. Enable daily
+automation only after the schema migration chain completes successfully. This
+task does not apply migrations.

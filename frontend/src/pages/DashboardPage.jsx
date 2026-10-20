@@ -172,6 +172,9 @@ function CashForecast({ atms, forecast }) {
     );
   }
   if (!forecast.data) return <EmptyState title="No forecast available" />;
+  if (forecast.data.forecast_type !== 'signed_flow') {
+    return <EmptyState title="Signed-flow dashboard chart unavailable" description="The selected persisted forecast is not a signed-flow forecast, so its value is not mixed with the signed-flow chart." />;
+  }
 
   const atm = atms.data[0];
   const series = [

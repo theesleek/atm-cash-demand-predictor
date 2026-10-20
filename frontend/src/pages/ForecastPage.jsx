@@ -104,6 +104,7 @@ export default function ForecastPage() {
 
   const chartData = useMemo(() => {
     if (!forecast.data) return [];
+    if (forecast.data.forecast_type !== 'signed_flow') return [];
     const points = (history.data?.historical_demand || []).map((point) => ({
       date: point.date,
       historicalCashFlow: Number(point.demand),
@@ -122,7 +123,7 @@ export default function ForecastPage() {
       <PageHeader
         eyebrow="Demand planning"
         title="Forecast"
-        description="Review the next-day signed net cash flow forecast and its operational risk basis."
+        description="Review the next-day persisted forecast and its operational risk basis."
         breadcrumbs={[{ label: 'Dashboard', to: '/dashboard' }, { label: 'Forecast' }]}
       />
 
@@ -146,7 +147,7 @@ export default function ForecastPage() {
           <>
             <section className="forecast-summary" aria-label="Forecast summary">
               <article><span><CalendarDays size={15} /> Forecast date</span><strong>{dateLabel(forecast.data.forecast_date)}</strong></article>
-              <article><span><Gauge size={15} /> Signed net cash flow</span><strong>{numberLabel(forecast.data.predicted_signed_net_cash_flow)}</strong></article>
+              <article><span><Gauge size={15} /> {forecast.data.forecast_type === 'withdrawal_demand' ? 'Withdrawal demand' : 'Signed net cash flow'}</span><strong>{numberLabel(forecast.data.forecast_type === 'withdrawal_demand' ? forecast.data.predicted_demand : forecast.data.predicted_signed_net_cash_flow)}</strong></article>
               <article><span><Landmark size={15} /> ATM</span><strong>{forecast.data.atm_id}</strong></article>
               <article><span><Cpu size={15} /> Model</span><strong>50/50 Linear Regression + Random Forest</strong></article>
               <article><span><Activity size={15} /> Model version</span><strong>{forecast.data.model_version || '—'}</strong></article>
@@ -178,7 +179,7 @@ export default function ForecastPage() {
                     </ResponsiveContainer>
                   </div>
                 </>
-              ) : <EmptyState title="Historical series unavailable" description="No mapped historical observations are available for this ATM." />}
+              ) : forecast.data.forecast_type === 'withdrawal_demand' ? <EmptyState title="Signed-flow chart unavailable" description="This persisted forecast is a withdrawal-demand forecast; its demand value is shown above and is not mixed with signed cash-flow history." /> : <EmptyState title="Historical series unavailable" description="No mapped historical observations are available for this ATM." />}
             </Card>
 
             <section className="forecast-explanation-grid">

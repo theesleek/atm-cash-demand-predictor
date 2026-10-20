@@ -43,7 +43,8 @@ the default email mechanism; Gmail API is an optional provider.
 - Authenticated JWT sessions with role-based access control and audit logging.
 - ATM onboarding and staged CSV history ingestion: upload, validate, approve,
   and ingest.
-- Per-ATM forecast, readiness, risk, alert, and replenishment views.
+- Per-ATM forecast, readiness, risk, alert, and replenishment views with
+  explicit forecast types for signed-flow and withdrawal-demand results.
 - Durable notification outbox and database-backed jobs with retries,
   idempotency keys, claim fencing, and stale-lease recovery.
 - Optional Telegram linking/webhooks and persisted delivery state.
@@ -204,8 +205,8 @@ exploration. These are development links, not production deployment claims.
 
 Production startup expects an already migrated database and does not call
 `create_all`. The current Alembic head is
-`0008_forecast_date_required`, following
-`0007_daily_forecast_uniqueness`.
+`0009_forecast_type_identity`, following
+`0008_forecast_date_required`.
 
 Apply the reviewed chain through `head`:
 
@@ -214,15 +215,20 @@ $env:PYTHONPATH = "backend"
 python -m alembic upgrade head
 ```
 
-Migration 0007 fails closed when duplicate
-`(atm_id, forecast_date, model_version)` identities exist. Migration 0008
-checks for existing `forecasts.forecast_date IS NULL` rows before enforcing
-`NOT NULL`; it intentionally aborts with an actionable error when any are
-found. Review and resolve those rows using authoritative data and an approved
-data-maintenance procedure. Do not invent dates or delete records merely to
-force migration success. Enable daily automation only after the migration
-chain completes successfully. Always back up production data and use an
-approved rollback plan before applying schema changes.
+Migration 0007 classifies existing rows as `withdrawal_demand` or `signed_flow`
+using their persisted risk-evaluation fields, and fails closed when a row is
+ambiguous or when duplicate
+`(atm_id, forecast_date, model_version, forecast_type)` identities exist.
+Migration 0008 checks for existing `forecasts.forecast_date IS NULL` rows before
+enforcing `NOT NULL`; it intentionally aborts with an actionable error when
+any are found. Migration 0009 converges databases that had already applied the
+previous 0008 head to the same forecast-type identity schema. Review and
+resolve ambiguous rows, duplicate identities, or NULL dates using authoritative
+data and an approved data-maintenance procedure. Do not invent dates, forecast
+types, or predictions, or delete records merely to force migration success.
+Enable daily automation only after the migration chain completes successfully.
+Always back up production data and use an approved rollback plan before
+applying schema changes.
 
 ## Testing and verification
 

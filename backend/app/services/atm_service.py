@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.permissions import has_permission
 from app.data.tinkoff_history import get_prototype_atm_mapping
-from app.models.atm import ATM
+from app.models.atm import ATM, FORECAST_TYPE_SIGNED_FLOW
 from app.repositories.atm_repository import ATMRepository
 from app.repositories.alert_repository import AlertRepository
 from app.repositories.cash_inventory_repository import CashInventoryRepository
@@ -149,6 +149,7 @@ class ATMService:
                     "current_cash": current_cash,
                     "predicted_demand": risk.predicted_demand if risk is not None else None,
                     "predicted_signed_net_cash_flow": float(forecast.predicted_signed_net_cash_flow) if forecast and forecast.predicted_signed_net_cash_flow is not None else None,
+                    "forecast_type": forecast.forecast_type if forecast is not None else None,
                     "forecast_date": forecast.forecast_date.isoformat() if forecast and forecast.forecast_date else None,
                     "projected_cash": risk.projected_cash if risk is not None else None,
                     "risk_level": forecast.risk_level.upper() if forecast and forecast.risk_evaluation_status == "AVAILABLE" and forecast.risk_level else None,
@@ -231,6 +232,7 @@ class ATMService:
             "capacity": capacity,
             "predicted_demand": risk.predicted_demand if risk is not None else None,
             "predicted_signed_net_cash_flow": forecast.predicted_signed_net_cash_flow if forecast is not None else None,
+            "forecast_type": forecast.forecast_type if forecast is not None else None,
             "projected_cash": risk.projected_cash if risk is not None else None,
             "risk_level": risk.risk_level if risk is not None else None,
             "risk_explanation": risk_explanation,
@@ -267,6 +269,7 @@ class ATMService:
         assessment = self._assess_persisted_forecast(forecast, current_cash, capacity)
         return {
             "forecast_id": forecast.id,
+            "forecast_type": forecast.forecast_type,
             "atm_id": atm.atm_code,
             "forecast_date": forecast.forecast_date.isoformat() if forecast.forecast_date else None,
             "predicted_demand": assessment.predicted_demand if assessment is not None else None,
@@ -313,6 +316,7 @@ class ATMService:
             predicted_signed_net_cash_flow=forecast.predicted_signed_net_cash_flow,
             risk_evaluation_status=forecast.risk_evaluation_status,
             risk_evaluation_reason=forecast.risk_evaluation_reason,
+            forecast_type=forecast.forecast_type,
         )
         persisted_risk = self._assess_persisted_forecast(persisted_forecast, current_cash, capacity)
         if persisted_risk is not None:
@@ -332,13 +336,18 @@ class ATMService:
                     f"{event_type}:{alert.id}",
                 )
         return {
-            "atm_id": forecast.atm_id,
+            "atm_id": record.atm_code,
             "forecast_id": persisted_forecast.id,
             "alert_id": alert.id if alert is not None else None,
             "forecast_date": persisted_forecast.forecast_date.date().isoformat(),
+            "forecast_type": persisted_forecast.forecast_type,
             "predicted_demand": persisted_risk.predicted_demand if persisted_risk is not None else None,
             "predicted_signed_net_cash_flow": float(persisted_forecast.predicted_signed_net_cash_flow) if persisted_forecast.predicted_signed_net_cash_flow is not None else None,
-            "forecast_label": "signed_net_cash_flow",
+            "forecast_label": (
+                "signed_net_cash_flow"
+                if persisted_forecast.forecast_type == FORECAST_TYPE_SIGNED_FLOW
+                else "withdrawal_demand"
+            ),
             "risk_demand_basis": persisted_risk.predicted_demand if persisted_risk is not None else None,
             "risk_level": persisted_risk.risk_level if persisted_risk is not None else None,
             "risk_evaluation_status": persisted_forecast.risk_evaluation_status,
@@ -346,7 +355,11 @@ class ATMService:
             "recommended_top_up": persisted_risk.recommended_top_up if persisted_risk is not None else None,
             "current_cash": persisted_risk.current_cash if persisted_risk is not None else current_cash,
             "capacity": capacity,
-            "target": forecast.target,
+            "target": (
+                "next_day_cash_flow"
+                if persisted_forecast.forecast_type == FORECAST_TYPE_SIGNED_FLOW
+                else "withdrawal_demand"
+            ),
             "model_name": forecast.model_name,
             "model_version": persisted_forecast.model_version,
             "projected_cash": persisted_risk.projected_cash if persisted_risk is not None else None,

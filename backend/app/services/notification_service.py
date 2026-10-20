@@ -22,6 +22,7 @@ from app.models.auth import User
 from app.repositories.atm_repository import ATMRepository
 from app.repositories.alert_repository import AlertRepository
 from app.repositories.forecast_repository import ForecastRepository
+from app.models.atm import FORECAST_TYPE_SIGNED_FLOW
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.replenishment_repository import ReplenishmentRepository
 from app.realtime import publish_realtime_event
@@ -422,6 +423,12 @@ class NotificationService:
             if not forecasts:
                 return "No forecast available."
             forecast = forecasts[0]
+            if forecast.forecast_type == FORECAST_TYPE_SIGNED_FLOW:
+                return (
+                    f"{atm.atm_code} forecast: signed net cash flow "
+                    f"{forecast.predicted_signed_net_cash_flow:.2f}. "
+                    "Demand-based risk and replenishment recommendation are unavailable."
+                )
             return (
                 f"{atm.atm_code} forecast: risk {forecast.risk_level}, "
                 f"demand {forecast.predicted_demand:.2f}, recommended top-up {forecast.recommended_top_up:.2f}."

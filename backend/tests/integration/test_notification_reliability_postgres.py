@@ -174,6 +174,7 @@ def test_concurrent_forecast_creation_is_idempotent(postgres_engine) -> None:
                 recommended_top_up=50.0,
                 forecast_date=forecast_date,
                 model_version=model_version,
+                forecast_type="signed_flow",
             )
             assert session.get(type(forecast), forecast.id) is not None
             return forecast.id, created
@@ -197,6 +198,7 @@ def test_concurrent_forecast_creation_is_idempotent(postgres_engine) -> None:
                     atm.Forecast.atm_id == atm_id,
                     atm.Forecast.forecast_date == forecast_date,
                     atm.Forecast.model_version == model_version,
+                    atm.Forecast.forecast_type == "signed_flow",
                 )
                 .all()
             )
@@ -208,6 +210,7 @@ def test_concurrent_forecast_creation_is_idempotent(postgres_engine) -> None:
                 recommended_top_up=999.0,
                 forecast_date=forecast_date,
                 model_version=model_version,
+                forecast_type="signed_flow",
             )
             assert existing.id == forecasts[0].id
             assert created is False
@@ -220,6 +223,7 @@ def test_concurrent_forecast_creation_is_idempotent(postgres_engine) -> None:
                 atm.Forecast.atm_id == atm_id,
                 atm.Forecast.forecast_date == forecast_date,
                 atm.Forecast.model_version == model_version,
+                atm.Forecast.forecast_type == "signed_flow",
             ).delete(synchronize_session=False)
             cleanup.query(atm.ATM).filter(atm.ATM.id == atm_id).delete(synchronize_session=False)
             cleanup.commit()

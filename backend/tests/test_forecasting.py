@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pandas as pd
@@ -139,6 +140,45 @@ def test_forecast_generation_for_valid_atm(synthetic_processed_history) -> None:
     assert result.target == "next_day_cash_flow"
     assert result.forecast_date == "2018-10-01"
     assert result.source == "uploaded_dataset"
+
+
+def test_withdrawal_demand_forecast_does_not_fill_signed_flow_field(monkeypatch) -> None:
+    from app.services import forecast_service as forecast_module
+
+    monkeypatch.setattr(forecast_module, "get_prototype_atm_mapping", lambda: {"ATM-001": 1})
+    monkeypatch.setattr(
+        forecast_module,
+        "build_feature_row_from_history",
+        lambda *_args, **_kwargs: (pd.DataFrame([[1.0]], columns=["feature"]), "2026-10-21T00:00:00+00:00"),
+    )
+    inference = Mock(feature_names=["feature"])
+    inference.predict.return_value = SimpleNamespace(
+        prediction=120.0,
+        target="withdrawal_demand",
+        model_name="demand-model",
+        model_version="demand-v1",
+    )
+    risk = Mock()
+    risk.assess.return_value = SimpleNamespace(
+        predicted_demand=120.0,
+        risk_level="NORMAL",
+        recommended_top_up=0.0,
+        current_cash=5000.0,
+        capacity=10000.0,
+        projected_cash=4880.0,
+        warning_threshold=1000.0,
+        high_threshold=500.0,
+        critical_threshold=250.0,
+        safety_buffer=100.0,
+    )
+
+    result = ForecastService(inference, risk, history_frame=object()).generate_forecast(
+        "ATM-001", current_cash=5000.0, daily_demand=1000.0, capacity=10000.0
+    )
+
+    assert result.forecast_type == "withdrawal_demand"
+    assert result.predicted_demand == 120.0
+    assert result.predicted_signed_net_cash_flow is None
 
 
 def test_invalid_atm_is_rejected() -> None:

@@ -211,9 +211,10 @@ export function ATMDetailPage() {
 
   const record = intelligence.data;
   const historical = record?.historical_demand || [];
+  const signedFlowForecast = record?.forecast_type === 'signed_flow';
   const chartData = [
     ...historical.map((point) => ({ date: point.date, historicalDemand: point.demand })),
-    ...(record?.predicted_signed_net_cash_flow !== null && record?.predicted_signed_net_cash_flow !== undefined && record?.forecast_date
+    ...(signedFlowForecast && record?.predicted_signed_net_cash_flow !== null && record?.predicted_signed_net_cash_flow !== undefined && record?.forecast_date
       ? [{ date: record.forecast_date, predictedSignedNetCashFlow: record.predicted_signed_net_cash_flow }]
       : []),
   ];
@@ -256,6 +257,7 @@ export function ATMDetailPage() {
                 <article><span>Operational status</span><StatusBadge status={record.status} /></article>
                 <article><span>Current cash</span><strong>{numberLabel(record.current_cash)}</strong></article>
                 <article><span>Cash capacity</span><strong>{numberLabel(record.capacity)}</strong></article>
+                <article><span>Forecast type</span><strong>{record.forecast_type === 'withdrawal_demand' ? 'Withdrawal demand' : record.forecast_type === 'signed_flow' ? 'Signed net cash flow' : '—'}</strong></article>
                 <article><span>Signed net cash flow</span><strong>{numberLabel(record.predicted_signed_net_cash_flow)}</strong></article>
                 <article><span>Risk demand basis</span><strong>{numberLabel(record.predicted_demand)}</strong></article>
                 <article><span>Projected cash</span><strong>{numberLabel(record.projected_cash)}</strong></article>
@@ -264,8 +266,8 @@ export function ATMDetailPage() {
               </section>
 
               <div className="atm-detail-sections">
-                <Card title="Forecast: Signed Net Cash Flow vs Risk Basis">
-                  {historical.length ? (
+                <Card title={signedFlowForecast ? 'Forecast: Signed Net Cash Flow vs Risk Basis' : 'Forecast and Risk Basis'}>
+                  {signedFlowForecast && historical.length ? (
                     <>
                       <p className="dashboard-chart-caption">Signed net cash flow uses the source dataset's unspecified units; it is not a verified withdrawal-demand basis{record.forecast_date ? ` · forecast date ${dateLabel(record.forecast_date)}` : ''}</p>
                       <div className="atm-detail-chart">
@@ -286,9 +288,9 @@ export function ATMDetailPage() {
                         </ResponsiveContainer>
                       </div>
                     </>
-                  ) : <EmptyState title="Historical signed net cash flow unavailable" description="No mapped historical observations are available for this ATM." />}
+                  ) : record.forecast_type === 'withdrawal_demand' ? <EmptyState title="Signed-flow chart not shown" description="This ATM has a withdrawal-demand forecast; its demand value is shown in the metrics and is not mixed with signed cash-flow history." /> : <EmptyState title="Historical signed net cash flow unavailable" description="No mapped historical observations are available for this ATM." />}
                   {record.risk_evaluation_status === 'UNAVAILABLE' && <p className="atm-detail-note">{record.risk_evaluation_reason || 'Verified withdrawal-demand data is required for risk evaluation.'}</p>}
-                  {record.predicted_signed_net_cash_flow === null && <p className="atm-detail-note">No persisted forecast is available for this ATM.</p>}
+                  {signedFlowForecast && record.predicted_signed_net_cash_flow === null && <p className="atm-detail-note">No persisted signed-flow forecast is available for this ATM.</p>}
                 </Card>
 
                 <Card title="Risk Explanation">
