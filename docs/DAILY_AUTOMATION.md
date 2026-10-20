@@ -7,7 +7,7 @@ new actual ATM history.
 ## Configuration
 
 Set `DAILY_AUTOMATION_ENABLED=true` only after the worker and the reviewed
-forecast uniqueness migration are deployed. `DAILY_AUTOMATION_MAX_DATA_AGE_DAYS`
+forecast schema migrations are deployed successfully. `DAILY_AUTOMATION_MAX_DATA_AGE_DAYS`
 defaults to `2`; an ATM whose latest successfully ingested actual date is older
 than that threshold is skipped with an explicit stale-data reason.
 
@@ -51,7 +51,14 @@ created forecast count, skipped ATMs, and failures.
 
 ## Migration
 
-Before enabling production automation, apply the reviewed Alembic migration
-`0007_daily_forecast_uniqueness` through the normal release process. It fails
-closed if existing duplicate `(atm_id, forecast_date, model_version)` rows are
-found. This task does not apply migrations.
+Before enabling production automation, apply the complete reviewed Alembic
+migration chain through `head`, including the latest release migration
+`0008_forecast_date_required`, through the normal release process. Migration
+`0007_daily_forecast_uniqueness` fails closed if existing duplicate
+`(atm_id, forecast_date, model_version)` rows are found. Migration
+`0008_forecast_date_required` first checks for existing rows where
+`forecasts.forecast_date` is `NULL`; it intentionally aborts if any are found.
+Review those records and resolve them using authoritative data and an approved
+data-maintenance procedure. Do not invent dates or delete records just to force
+the migration to succeed. Enable daily automation only after the schema
+migration chain completes successfully. This task does not apply migrations.
